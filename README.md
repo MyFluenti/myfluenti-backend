@@ -24,8 +24,25 @@ Conteúdo (aulas, questões, alternativas) é lido por `select` normal; o RLS j�
 
 ## Testes
 
-`tests/00_supabase_stub.sql` simula `auth.users`, `auth.uid()` e os papéis do Supabase (usar **só** em PostgreSQL local).
-`tests/10_smoke_test.sql` roda os critérios NIV, AUL, MOD, REV e SEC com 87 verificações.
+`tests/10_smoke_test.sql` roda os critérios NIV, AUL, MOD, REV e SEC com 86 verificações (59 asserções e 27 erros esperados). Cada uma imprime `NOTICE:  PASS`, e a última linha imprime `===== TODOS OS TESTES PASSARAM =====`. Atenção: `grep -c PASS` devolve 87 porque também conta essa linha final.
+
+### No Supabase local (referência)
+
+O teste roda **sem o stub** e sem alterações. O `auth.users` real aceita o insert só com `id` e `email`, porque as demais colunas do GoTrue são anuláveis. O `auth.uid()` real lê `request.jwt.claim.sub`, que é o claim que o teste define. O teste também passa como `postgres`, que no Supabase não é superusuário.
+
+```powershell
+npx -y supabase@2.121.0 start -x realtime,storage-api,imgproxy,mailpit,studio,edge-runtime,logflare,vector,supavisor,postgres-meta
+npx -y supabase@2.121.0 db reset
+Get-Content tests/10_smoke_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
+npx -y supabase@2.121.0 db reset   # apaga os dados e as tabelas zz_* criadas pelo teste
+npx -y supabase@2.121.0 db advisors --local --type all
+```
+
+O `-x` deixa de fora os serviços que o teste não usa (economiza alguns GB de imagens). O psql roda dentro do contêiner do banco, então não precisa instalar o psql no Windows. O `2>&1` fica dentro do `sh -c` de propósito. O psql imprime os `NOTICE` no stderr, e o PowerShell 5.1 transforma a primeira linha de stderr num falso erro vermelho que repete a linha, o que faz a contagem dar uma a mais.
+
+### Em PostgreSQL comum (CI atual)
+
+`tests/00_supabase_stub.sql` simula `auth.users`, `auth.uid()` e os papéis do Supabase (usar **só** em PostgreSQL comum, nunca no Supabase).
 
 ```
 createdb mf

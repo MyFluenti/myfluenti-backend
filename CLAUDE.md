@@ -39,8 +39,10 @@ psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261103000003_functions.sq
 psql -v ON_ERROR_STOP=1 -d mf -f tests/10_smoke_test.sql
 ```
 
-Esperado: a última linha imprime `TODOS OS TESTES PASSARAM`. O stub não deve ser aplicado no Supabase real. Ao migrar os testes para `supabase start`, verifique se o `auth.users` real aceita os inserts do teste.
+Esperado: 86 linhas `NOTICE:  PASS` e a última linha `TODOS OS TESTES PASSARAM`. O stub não deve ser aplicado no Supabase real.
+
+No Supabase local, o mesmo teste roda sem stub e sem alterações (comandos no README, seção "No Supabase local"). Rode `supabase db reset` depois, para apagar os dados de teste.
 
 ## Pendências deste repositório
 
-Rodar tudo no Supabase local e depois em staging; criar `config.toml`, workflows de CI e `docs/api.md`; RPC de revisão com `review_sessions`; troca de nível ao concluir um nível; regra de refazer aula após nova versão (`requires_relearning`, `needs_update`).
+Rodar em staging; levar o teste no Supabase local para o CI; criar `docs/api.md`; decidir sobre o aviso `security_definer_view` em `placement_test_items` (intencional, ver PR de testes locais); RPC de revisão com `review_sessions`; troca de nível ao concluir um nível; regra de refazer aula após nova versão (`requires_relearning`, `needs_update`).
