@@ -542,8 +542,8 @@ end $$;
 -- =====================================================================
 -- B3. get_my_favorites
 -- =====================================================================
--- Obs.: para frases de vocabulario Premium sem plano, o titulo (example_en) segue o
--- contrato aprovado e e devolvido; so o subtitle (traducao) fica null.
+-- Decisao do Gabriel: frase de vocabulario Premium sem plano (locked) devolve title e
+-- subtitle null (o texto da frase fica escondido).
 create or replace function public.get_my_favorites(
   p_kind text default null, p_limit int default 20, p_offset int default 0)
 returns jsonb
@@ -569,7 +569,8 @@ begin
       cross join lateral (select (v.access_tier = 'premium' and not v_prem) as locked) lk
      where uv.user_id = v_uid and uv.is_favorite and p_kind is distinct from 'phrase'
     union all
-    select 'phrase', e.id, e.example_en,
+    select 'phrase', e.id,
+           case when lk.locked then null else e.example_en end,
            case when lk.locked then null else e.example_pt end,
            v.id, v.access_tier, lk.locked, fe.created_at
       from public.user_favorite_examples fe
@@ -721,15 +722,17 @@ end $$;
 -- =====================================================================
 -- B6. submit_review_answer
 -- =====================================================================
--- Nao altera user_topic_mastery (PENDENTE de decisao do Gabriel).
+-- Decisao do Gabriel: a revisao altera o dominio (user_topic_mastery) como a aula.
 create or replace function public.submit_review_answer(
-  p_session_id uuid, p_question_id uuid, p_answer jsonb)
+  p_session_id uuid, p_question_id uuid, p_answer jsonb, p_timezone text default 'UTC')
 returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
   v_uid uuid := private.require_user();
   v_ok boolean; v_expl text;
+  v_attempt uuid; v_due timestamptz; v_last timestamptz; v_end timestamptz;
 begin
+  v_end := private.local_day_end(p_timezone);
   perform private.lock_open_review_session(v_uid, p_session_id);
 
   if p_question_id is null
@@ -750,7 +753,46 @@ begin
   insert into public.user_exercise_attempts
     (user_id, review_session_id, question_id, submitted_answer,
      is_correct, awarded_points, max_points)
-  values (v_uid, p_session_id, p_question_id, coalesce(p_answer, '{}'::jsonb), v_ok, 0, 0);
+  values (v_uid, p_session_id, p_question_id, coalesce(p_answer, '{}'::jsonb), v_ok, 0, 0)
+  returning id into v_attempt;
+
+  -- Decisao do Gabriel (2026-11-04): dominio conta so com questao vencida e uma vez por ciclo.
+  -- (a) vencida ate o fim do dia local (mesma regua da fila); (b) primeira resposta do ciclo;
+  -- (c) nenhuma outra resposta de revisao da questao no dia local (o aluno controla o agendamento,
+  --     entao so (a) e (b) poderiam ser reabertos por reset via record_review_result).
+  -- PROVISORIO: regua de vencimento para contar no dominio (fim do dia local do aparelho).
+  select rs.due_at, rs.last_reviewed_at into v_due, v_last
+    from public.review_schedule rs
+   where rs.user_id = v_uid and rs.question_id = p_question_id;
+
+  -- PROVISORIO: formula de dominio (mesma da aula)
+  -- PROVISORIO: no maximo uma resposta de revisao contada no dominio por questao por dia local
+  if v_due < v_end
+     and not exists (
+       select 1 from public.user_exercise_attempts x
+        where x.user_id = v_uid and x.question_id = p_question_id
+          and x.review_session_id is not null
+          and x.answered_at >= v_end - interval '1 day'
+          and x.id <> v_attempt)
+     and not exists (
+       select 1 from public.user_exercise_attempts x
+        where x.user_id = v_uid and x.question_id = p_question_id
+          and x.review_session_id is not null
+          and x.answered_at > coalesce(v_last, '-infinity'::timestamptz)
+          and x.id <> v_attempt) then
+  insert into public.user_topic_mastery
+    (user_id, grammar_topic_id, attempts_count, correct_count, mastery_score, last_practiced_at)
+  select v_uid, q.grammar_topic_id, 1, case when v_ok then 1 else 0 end,
+         case when v_ok then 100.0 else 0.0 end, now()
+    from public.questions q
+   where q.id = p_question_id and q.grammar_topic_id is not null
+  on conflict (user_id, grammar_topic_id) do update set
+    attempts_count = public.user_topic_mastery.attempts_count + excluded.attempts_count,
+    correct_count  = public.user_topic_mastery.correct_count + excluded.correct_count,
+    mastery_score  = (public.user_topic_mastery.correct_count + excluded.correct_count) * 100.0
+                     / (public.user_topic_mastery.attempts_count + excluded.attempts_count),
+    last_practiced_at = now();
+  end if;
 
   return jsonb_build_object('is_correct', v_ok, 'explanation', v_expl);
 end $$;
@@ -955,7 +997,7 @@ begin
     'public.get_my_favorites(text, integer, integer)',
     'public.get_review_queue(text, integer)',
     'public.start_review_session()',
-    'public.submit_review_answer(uuid, uuid, jsonb)',
+    'public.submit_review_answer(uuid, uuid, jsonb, text)',
     'public.record_review_result_v2(uuid, text, uuid, uuid, uuid)',
     'public.finish_review_session(uuid, text)',
     'public.get_profile_summary(text)'

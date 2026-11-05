@@ -42,7 +42,7 @@ psql -v ON_ERROR_STOP=1 -d mf -f tests/10_smoke_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/20_library_review_profile_test.sql
 ```
 
-Esperado: 86 linhas `NOTICE:  PASS` no smoke (última linha `TODOS OS TESTES PASSARAM`) e 203 no tests/20 (última linha `TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM`). O stub não deve ser aplicado no Supabase real.
+Esperado: 86 linhas `NOTICE:  PASS` no smoke (última linha `TODOS OS TESTES PASSARAM`) e 229 no tests/20 (última linha `TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM`). O stub não deve ser aplicado no Supabase real.
 
 No Supabase local, o mesmo teste roda sem stub e sem alterações (comandos no README, seção "No Supabase local"). Rode `supabase db reset` depois, para apagar os dados de teste.
 
@@ -50,4 +50,4 @@ No Supabase local, o mesmo teste roda sem stub e sem alterações (comandos no R
 
 Rodar em staging; levar o teste no Supabase local para o CI; decidir sobre o aviso `security_definer_view` em `placement_test_items` (intencional, ver PR de testes locais); troca de nível ao concluir um nível; regra de refazer aula após nova versão (`requires_relearning`, `needs_update`).
 
-O teste esperado agora inclui o `tests/20_library_review_profile_test.sql`, que roda depois do `10_smoke_test.sql` no mesmo banco: 86 PASS no smoke e 203 PASS no tests/20.
+O teste esperado agora inclui o `tests/20_library_review_profile_test.sql`, que roda depois do `10_smoke_test.sql` no mesmo banco: 86 PASS no smoke e 229 PASS no tests/20.

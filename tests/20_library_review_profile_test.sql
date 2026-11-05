@@ -78,7 +78,7 @@ create function public.zt_rpc_calls() returns text[] language sql immutable as $
   ]
 $$;
 
-create function public.zt_mk_lesson(p_module uuid, p_slug text, p_pos int, p_nq int)
+create function public.zt_mk_lesson(p_module uuid, p_slug text, p_pos int, p_nq int, p_topic uuid default null)
 returns void language plpgsql as $$
 declare l uuid; v uuid; s uuid; e uuid; q uuid; o1 uuid; o2 uuid; i int;
 begin
@@ -89,8 +89,8 @@ begin
     values (v, 1, 'explanation', 'Explicacao') returning id into s;
   insert into public.exercises (lesson_version_id, position, title) values (v, 1, 'Ex 1') returning id into e;
   for i in 1..p_nq loop
-    insert into public.questions (lesson_version_id, exercise_id, question_type, prompt, position)
-      values (v, e, 'multiple_choice', 'ZTQ ' || p_slug || ' ' || i, i) returning id into q;
+    insert into public.questions (lesson_version_id, exercise_id, question_type, prompt, position, grammar_topic_id)
+      values (v, e, 'multiple_choice', 'ZTQ ' || p_slug || ' ' || i, i, p_topic) returning id into q;
     insert into public.answer_options (question_id, option_text, position) values (q, 'certa', 1) returning id into o1;
     insert into public.answer_options (question_id, option_text, position) values (q, 'errada', 2) returning id into o2;
     insert into private.question_answer_keys (question_id, correct_option_id, explanation)
@@ -215,6 +215,7 @@ insert into public.lesson_sections (id, lesson_version_id, position, section_typ
 insert into public.grammar_topics (id, slug, title, category, is_published) values
   ('a0a0a0a0-0000-0000-0000-000000000011', 'lit-wild', 'lit 100% _x\y', 'lit', true),
   ('a0a0a0a0-0000-0000-0000-000000000012', 'lit-ctrl', 'lit 100 abc', 'lit', true);
+select public.zt_mk_lesson('0e0e0e0e-0000-0000-0000-000000000050', 'ztG1', 3, 3, 'a0a0a0a0-0000-0000-0000-000000000001');
 
 -- Aluno 7: nivelamento em andamento com uma questao de banco
 insert into auth.users (id, email) values ('77777777-7777-7777-7777-777777777777', 'zt7@teste');
@@ -834,6 +835,15 @@ begin
   perform public.zt_assert((r->>'total')::int = 2 and not exists (
       select 1 from jsonb_array_elements(r->'items') e where not (e->>'locked')::boolean or e->>'subtitle' is not null),
     'FAV: favoritos Premium sem plano ficam locked e sem subtitle');
+  perform public.zt_assert(
+      (select e->>'title' is null and e->>'subtitle' is null and (e->>'locked')::boolean
+              and e->>'id' = 'c0c0c0c0-0000-0000-0000-000000000003'
+              and e->>'vocabulary_id' = 'b0b0b0b0-0000-0000-0000-000000000004'
+              and e->>'access_tier' = 'premium' and e->>'favorited_at' is not null
+         from jsonb_array_elements(r->'items') e where e->>'kind' = 'phrase')
+    and (select e->>'title' = 'ztpremword' from jsonb_array_elements(r->'items') e where e->>'kind' = 'word')
+    and position('They ztpremword it' in r::text) = 0 and position('Eles ztpremword' in r::text) = 0,
+    'FAV: frase Premium locked devolve title e subtitle null (texto da frase nao aparece no jsonb)');
   r := public.get_profile_summary();
   perform public.zt_assert(r->>'plan_tier' = 'free' and (r->'review'->>'due_today')::int = 0
     and (r->'review'->>'total_scheduled')::int = 0 and (r->>'favorites_count')::int = 2,
@@ -899,6 +909,232 @@ begin
 end $$;
 reset role;
 
+-- Decisao do Gabriel: a revisao altera o dominio como a aula (aluno 7, topico sem dominio previo)
+insert into public.user_lesson_attempts (id, user_id, lesson_version_id, status, earned_points, total_points, score_pct, completed_at)
+  values ('e1e1e1e1-0000-0000-0000-000000000007', '77777777-7777-7777-7777-777777777777',
+          (select version_id from public.zt_l where slug = 'ztG1'), 'completed', 0, 2, 0, now());
+insert into public.user_exercise_attempts
+  (user_id, lesson_attempt_id, lesson_version_id, question_id, submitted_answer, is_correct, awarded_points, max_points)
+select '77777777-7777-7777-7777-777777777777', 'e1e1e1e1-0000-0000-0000-000000000007',
+       (select version_id from public.zt_l where slug = 'ztG1'), public.zt_qid('ztG1', i), '{}', false, 0, 1
+  from generate_series(1, 3) i;
+insert into public.review_schedule (user_id, question_id, due_at)
+  select '77777777-7777-7777-7777-777777777777', public.zt_qid('ztG1', i),
+         case when i = 3 then now() + interval '3 days' else now() - interval '1 hour' end
+    from generate_series(1, 3) i;
+
+set role authenticated;
+select public.zt_as('77777777-7777-7777-7777-777777777777');
+do $$
+declare s uuid := public.start_review_session(); r jsonb; gf uuid := 'a0a0a0a0-0000-0000-0000-000000000001';
+begin
+  r := public.submit_review_answer(s, public.zt_qid('ztL2', 1), jsonb_build_object('option_id', public.zt_corr('ztL2', 1)));
+  perform public.zt_assert((select count(*) = 0 from public.user_topic_mastery)
+    and r = jsonb_build_object('is_correct', true, 'explanation', 'Explicacao ztL2 1'),
+    'MASTERY: questao sem grammar_topic_id nao cria linha; retorno inalterado');
+  r := public.submit_review_answer(s, public.zt_qid('ztG1', 1), jsonb_build_object('option_id', public.zt_corr('ztG1', 1)));
+  perform public.zt_assert((select attempts_count = 1 and correct_count = 1 and mastery_score = 100 and last_practiced_at is not null
+                              from public.user_topic_mastery where grammar_topic_id = gf)
+    and r = jsonb_build_object('is_correct', true, 'explanation', 'Explicacao ztG1 1'),
+    'MASTERY: acerto na revisao cria dominio 1/1 = 100 (formula provisoria da aula)');
+  r := public.submit_review_answer(s, public.zt_qid('ztG1', 2), jsonb_build_object('option_id', public.zt_wrong('ztG1', 2)));
+  perform public.zt_assert((select attempts_count = 2 and correct_count = 1 and mastery_score = 50
+                              from public.user_topic_mastery where grammar_topic_id = gf)
+    and not (r->>'is_correct')::boolean, 'MASTERY: erro na revisao soma tentativa: 2/1 = 50');
+  perform public.zt_assert((select count(*) = 1 from public.user_topic_mastery), 'MASTERY: so o topico da questao foi tocado');
+  r := public.get_profile_summary();
+  perform public.zt_assert(jsonb_array_length(r->'mastery') = 1 and (r->'mastery'->0->>'mastery_pct')::numeric = 50
+    and (r->'mastery'->0->>'attempts')::int = 2, 'MASTERY: get_profile_summary reflete o novo dominio');
+  perform public.zt_assert((public.search_library(p_query := 'ZT Present')->'items'->0->>'mastery_pct')::numeric = 50
+    and (public.get_library_item('grammar', gf)->'mastery'->>'attempts')::int = 2,
+    'MASTERY: search_library e get_library_item refletem o novo dominio');
+end $$;
+reset role;
+
+-- Decisao do Gabriel (2026-11-04): dominio conta so com questao vencida e uma vez por ciclo.
+-- Estado de partida do topico (aluno 7): 2 tentativas, 1 acerto, 50.
+-- (a) questao NAO vencida (q3, vence em 3 dias): corrige e devolve normalmente, mas nao muda o dominio
+set role authenticated;
+select public.zt_as('77777777-7777-7777-7777-777777777777');
+do $$
+declare s uuid := public.start_review_session(); r jsonb;
+begin
+  r := public.submit_review_answer(s, public.zt_qid('ztG1', 3), jsonb_build_object('option_id', public.zt_corr('ztG1', 3)));
+  perform public.zt_assert(r = jsonb_build_object('is_correct', true, 'explanation', 'Explicacao ztG1 3'),
+    'DOM-CICLO: questao nao vencida devolve is_correct e explanation normalmente');
+  perform public.zt_assert((select attempts_count = 2 and correct_count = 1 and mastery_score = 50
+                              from public.user_topic_mastery), 'DOM-CICLO: questao nao vencida nao muda o dominio (2/1/50)');
+  perform public.zt_assert(exists (select 1 from public.user_exercise_attempts where review_session_id = s and question_id = public.zt_qid('ztG1', 3)),
+    'DOM-CICLO: a resposta nao contada foi gravada mesmo assim');
+  perform public.finish_review_session(s);
+end $$;
+
+-- (b) nova sessao, mesma questao vencida (q1) sem avaliar antes: nao conta de novo
+do $$
+declare s uuid := public.start_review_session(); r jsonb;
+begin
+  r := public.submit_review_answer(s, public.zt_qid('ztG1', 1), jsonb_build_object('option_id', public.zt_corr('ztG1', 1)));
+  perform public.zt_assert((r->>'is_correct')::boolean and r->>'explanation' = 'Explicacao ztG1 1',
+    'DOM-CICLO: nova sessao corrige a resposta repetida normalmente');
+  perform public.zt_assert((select attempts_count = 2 and correct_count = 1 and mastery_score = 50
+                              from public.user_topic_mastery), 'DOM-CICLO: repetir a questao antes de avaliar nao conta de novo (2/1/50)');
+end $$;
+reset role;
+
+-- q1 passa a ter repeticoes = 1 / intervalo 1: a avaliacao 'good' leva o proximo vencimento a 6 dias
+update public.review_schedule set repetitions = 1, interval_days = 1
+ where user_id = '77777777-7777-7777-7777-777777777777' and question_id = public.zt_qid('ztG1', 1);
+
+-- (c) avaliar (v2) empurra o vencimento para o futuro
+set role authenticated;
+select public.zt_as('77777777-7777-7777-7777-777777777777');
+select public.record_review_result_v2(public.start_review_session(), 'good', p_question_id := public.zt_qid('ztG1', 1));
+select public.finish_review_session(public.start_review_session());
+
+-- (d) nova resposta apos avaliar, ainda nao vencida: nao conta
+do $$
+declare s uuid := public.start_review_session();
+begin
+  perform public.zt_assert((select due_at > now() + interval '5 days' from public.review_schedule
+                             where question_id = public.zt_qid('ztG1', 1)), 'DOM-CICLO: v2 levou o vencimento para o futuro (6 dias)');
+  perform public.submit_review_answer(s, public.zt_qid('ztG1', 1), jsonb_build_object('option_id', public.zt_corr('ztG1', 1)));
+  perform public.zt_assert((select attempts_count = 2 and correct_count = 1 and mastery_score = 50
+                              from public.user_topic_mastery), 'DOM-CICLO: resposta apos avaliar e ainda nao vencida nao conta (2/1/50)');
+  perform public.finish_review_session(s);
+end $$;
+
+-- (e) ciclo ainda aberto para q2: responder (certo) nao conta; depois avalia (v2 good, vence em 1 dia)
+do $$
+declare s uuid := public.start_review_session();
+begin
+  perform public.submit_review_answer(s, public.zt_qid('ztG1', 2), jsonb_build_object('option_id', public.zt_corr('ztG1', 2)));
+  perform public.zt_assert((select attempts_count = 2 and correct_count = 1 and mastery_score = 50
+                              from public.user_topic_mastery), 'DOM-CICLO: q2 repetida antes de avaliar nao conta (2/1/50)');
+end $$;
+select public.record_review_result_v2(public.start_review_session(), 'good', p_question_id := public.zt_qid('ztG1', 2));
+select public.finish_review_session(public.start_review_session());
+
+-- (f) ataque: 5 sessoes seguidas respondendo q2 errado; o ciclo reabriu, mas a regra do dia local (q2 ja respondida hoje) barra
+do $$
+declare s uuid; i int;
+begin
+  for i in 1..5 loop
+    s := public.start_review_session();
+    perform public.submit_review_answer(s, public.zt_qid('ztG1', 2), jsonb_build_object('option_id', public.zt_wrong('ztG1', 2)));
+    perform public.finish_review_session(s);
+  end loop;
+  perform public.zt_assert((select attempts_count = 2 and correct_count = 1 and mastery_score = 50
+                              from public.user_topic_mastery),
+    'DOM-CICLO: 5 sessoes seguidas no mesmo dia, apos avaliar, nao mudam o dominio (continua 2/1/50; q2 ja foi respondida hoje)');
+  perform public.zt_assert((select count(*) = 5 from public.user_exercise_attempts
+                             where question_id = public.zt_qid('ztG1', 2) and review_session_id is not null
+                               and answered_at = now()), 'DOM-CICLO: as 5 respostas foram gravadas e corrigidas');
+end $$;
+reset role;
+
+-- SG-B: o dominio de outros alunos nao mudou
+select public.zt_assert((select mastery_score = 75 and attempts_count = 4 and correct_count = 3
+                           from public.user_topic_mastery
+                          where user_id = '44444444-4444-4444-4444-444444444444'
+                            and grammar_topic_id = 'a0a0a0a0-0000-0000-0000-000000000001')
+  and not exists (select 1 from public.user_topic_mastery
+                   where user_id in ('55555555-5555-5555-5555-555555555555', '66666666-6666-6666-6666-666666666666')),
+  'DOM-CICLO: dominio de outros alunos nao e alterado pela revisao do aluno 7');
+
+-- ---------------------------------------------------------------------
+-- Dominio: reset de agendamento nao reabre a contagem (no maximo 1 resposta contada por questao por dia local)
+-- Aluno 8. Cada passo e um statement/DO proprio (transacoes separadas: now() muda entre eles).
+-- Obs.: "outro dia" nao e simulavel: user_exercise_attempts e imutavel (trigger 55000); testamos o mesmo dia.
+-- ---------------------------------------------------------------------
+insert into auth.users (id, email) values ('88888888-8888-8888-8888-888888888888', 'zt8@teste');
+insert into public.user_lesson_attempts (id, user_id, lesson_version_id, status, earned_points, total_points, score_pct, completed_at)
+  values ('e1e1e1e1-0000-0000-0000-000000000008', '88888888-8888-8888-8888-888888888888',
+          (select version_id from public.zt_l where slug = 'ztG1'), 'completed', 0, 3, 0, now());
+insert into public.user_exercise_attempts
+  (user_id, lesson_attempt_id, lesson_version_id, question_id, submitted_answer, is_correct, awarded_points, max_points)
+select '88888888-8888-8888-8888-888888888888', 'e1e1e1e1-0000-0000-0000-000000000008',
+       (select version_id from public.zt_l where slug = 'ztG1'), public.zt_qid('ztG1', i), '{}', false, 0, 1
+  from generate_series(1, 3) i;
+insert into public.review_schedule (user_id, question_id, due_at)
+  select '88888888-8888-8888-8888-888888888888', public.zt_qid('ztG1', i), now() - interval '1 hour'
+    from generate_series(1, 3) i;
+
+set role authenticated;
+select public.zt_as('88888888-8888-8888-8888-888888888888');
+do $$
+declare s uuid := public.start_review_session();
+begin
+  perform public.submit_review_answer(s, public.zt_qid('ztG1', 1), jsonb_build_object('option_id', public.zt_corr('ztG1', 1)));
+  perform public.zt_assert((select attempts_count = 1 and correct_count = 1 and mastery_score = 100 from public.user_topic_mastery),
+    'DOM-DIA: primeira resposta do dia conta (1/1/100)');
+  perform public.finish_review_session(s);
+end $$;
+-- reset via v1 (qualidade 0)
+select public.record_review_result(p_question_id := public.zt_qid('ztG1', 1), p_quality := 0::smallint);
+do $$
+declare s uuid := public.start_review_session(); r jsonb;
+begin
+  r := public.submit_review_answer(s, public.zt_qid('ztG1', 1), jsonb_build_object('option_id', public.zt_corr('ztG1', 1)));
+  perform public.zt_assert((r->>'is_correct')::boolean and (select attempts_count = 1 and correct_count = 1 and mastery_score = 100
+                              from public.user_topic_mastery), 'DOM-DIA: reset via v1 quality 0 + nova resposta no mesmo dia nao conta (1/1/100)');
+  perform public.finish_review_session(s);
+end $$;
+reset role;
+-- reabre de proposito (a) e (b): vencida e sem last_reviewed_at; so a regra do dia (c) deve barrar
+update public.review_schedule set due_at = now() - interval '1 hour', last_reviewed_at = null
+ where user_id = '88888888-8888-8888-8888-888888888888' and question_id = public.zt_qid('ztG1', 1);
+set role authenticated;
+select public.zt_as('88888888-8888-8888-8888-888888888888');
+do $$
+declare s uuid := public.start_review_session();
+begin
+  perform public.submit_review_answer(s, public.zt_qid('ztG1', 1), jsonb_build_object('option_id', public.zt_corr('ztG1', 1)));
+  perform public.zt_assert((select attempts_count = 1 and correct_count = 1 and mastery_score = 100 from public.user_topic_mastery),
+    'DOM-DIA: mesmo com (a) e (b) reabertos, a regra do dia local barra a segunda contagem');
+  perform public.finish_review_session(s);
+end $$;
+
+-- reset via erro proposital + v2 (q2)
+do $$
+declare s uuid := public.start_review_session();
+begin
+  perform public.submit_review_answer(s, public.zt_qid('ztG1', 2), jsonb_build_object('option_id', public.zt_wrong('ztG1', 2)));
+  perform public.zt_assert((select attempts_count = 2 and correct_count = 1 and mastery_score = 50 from public.user_topic_mastery),
+    'DOM-DIA: q2 errada conta uma vez (2/1/50)');
+end $$;
+select public.record_review_result_v2(public.start_review_session(), 'easy', p_question_id := public.zt_qid('ztG1', 2));
+select public.finish_review_session(public.start_review_session());
+reset role;
+update public.review_schedule set due_at = now() - interval '1 hour', last_reviewed_at = null
+ where user_id = '88888888-8888-8888-8888-888888888888' and question_id = public.zt_qid('ztG1', 2);
+set role authenticated;
+select public.zt_as('88888888-8888-8888-8888-888888888888');
+do $$
+declare s uuid := public.start_review_session(); r jsonb;
+begin
+  r := public.submit_review_answer(s, public.zt_qid('ztG1', 2), jsonb_build_object('option_id', public.zt_corr('ztG1', 2)));
+  perform public.zt_assert((r->>'is_correct')::boolean and (select attempts_count = 2 and correct_count = 1 and mastery_score = 50
+                              from public.user_topic_mastery),
+    'DOM-DIA: reset via erro + v2 e nova resposta no mesmo dia nao conta (2/1/50)');
+  perform public.finish_review_session(s);
+end $$;
+
+-- fuso: invalido recusado sem gravar nada; valido aceito e conta
+do $$
+declare s uuid := public.start_review_session();
+begin
+  perform public.zt_expect_error(format(
+    $q$select public.submit_review_answer(%L, %L, '{}', 'Mars/Phobos')$q$, s, public.zt_qid('ztG1', 3)), '22023', 'invalid_timezone');
+  perform public.zt_assert(not exists (select 1 from public.user_exercise_attempts where review_session_id = s),
+    'DOM-DIA: invalid_timezone no submit_review_answer nao grava resposta');
+  perform public.submit_review_answer(s, public.zt_qid('ztG1', 3), jsonb_build_object('option_id', public.zt_corr('ztG1', 3)),
+                                      'America/Sao_Paulo');
+  perform public.zt_assert((select attempts_count = 3 and correct_count = 2 and mastery_score = 200.0 / 3 from public.user_topic_mastery),
+    'DOM-DIA: fuso valido (America/Sao_Paulo) aceito e a resposta conta (3/2/66,66...)');
+  perform public.finish_review_session(s);
+end $$;
+reset role;
+
 -- S4: uma unica sessao aberta por aluno
 select public.zt_expect_error(
   $q$insert into public.review_sessions (user_id) values ('44444444-4444-4444-4444-444444444444')$q$, '23505');
@@ -930,7 +1166,7 @@ select public.zt_assert(not exists (
 
 delete from auth.users where id in ('44444444-4444-4444-4444-444444444444',
   '55555555-5555-5555-5555-555555555555', '66666666-6666-6666-6666-666666666666',
-  '77777777-7777-7777-7777-777777777777');
+  '77777777-7777-7777-7777-777777777777', '88888888-8888-8888-8888-888888888888');
 select public.zt_assert(not exists (select 1 from public.review_session_items)
   and not exists (select 1 from public.user_favorite_examples)
   and not exists (select 1 from public.review_sessions)
