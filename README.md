@@ -35,7 +35,7 @@ Conteúdo (aulas, questões, alternativas) é lido por `select` normal; o RLS j�
 
 `tests/10_smoke_test.sql` roda os critérios NIV, AUL, MOD, REV e SEC com 86 verificações (59 asserções e 27 erros esperados). Cada uma imprime `NOTICE:  PASS`, e a última linha imprime `===== TODOS OS TESTES PASSARAM =====`. Atenção: `grep -c PASS` devolve 87 porque também conta essa linha final.
 
-`tests/20_library_review_profile_test.sql` cobre Biblioteca, favoritos, notas, revisão e perfil, com 203 verificações. Roda **depois** do smoke, no mesmo banco, sem `db reset` entre os dois. Termina com `===== TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM =====`.
+`tests/20_library_review_profile_test.sql` cobre Biblioteca, favoritos, notas, revisão e perfil, com 210 verificações. Roda **depois** do smoke, no mesmo banco, sem `db reset` entre os dois. Termina com `===== TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM =====`.
 
 ### No Supabase local (referência)
 
