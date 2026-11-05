@@ -542,8 +542,8 @@ end $$;
 -- =====================================================================
 -- B3. get_my_favorites
 -- =====================================================================
--- Obs.: para frases de vocabulario Premium sem plano, o titulo (example_en) segue o
--- contrato aprovado e e devolvido; so o subtitle (traducao) fica null.
+-- Decisao do Gabriel: frase de vocabulario Premium sem plano (locked) devolve title e
+-- subtitle null (o texto da frase fica escondido).
 create or replace function public.get_my_favorites(
   p_kind text default null, p_limit int default 20, p_offset int default 0)
 returns jsonb
@@ -569,7 +569,8 @@ begin
       cross join lateral (select (v.access_tier = 'premium' and not v_prem) as locked) lk
      where uv.user_id = v_uid and uv.is_favorite and p_kind is distinct from 'phrase'
     union all
-    select 'phrase', e.id, e.example_en,
+    select 'phrase', e.id,
+           case when lk.locked then null else e.example_en end,
            case when lk.locked then null else e.example_pt end,
            v.id, v.access_tier, lk.locked, fe.created_at
       from public.user_favorite_examples fe
@@ -721,7 +722,7 @@ end $$;
 -- =====================================================================
 -- B6. submit_review_answer
 -- =====================================================================
--- Nao altera user_topic_mastery (PENDENTE de decisao do Gabriel).
+-- Decisao do Gabriel: a revisao altera o dominio (user_topic_mastery) como a aula.
 create or replace function public.submit_review_answer(
   p_session_id uuid, p_question_id uuid, p_answer jsonb)
 returns jsonb
@@ -751,6 +752,20 @@ begin
     (user_id, review_session_id, question_id, submitted_answer,
      is_correct, awarded_points, max_points)
   values (v_uid, p_session_id, p_question_id, coalesce(p_answer, '{}'::jsonb), v_ok, 0, 0);
+
+  -- PROVISORIO: formula de dominio (mesma da aula)
+  insert into public.user_topic_mastery
+    (user_id, grammar_topic_id, attempts_count, correct_count, mastery_score, last_practiced_at)
+  select v_uid, q.grammar_topic_id, 1, case when v_ok then 1 else 0 end,
+         case when v_ok then 100.0 else 0.0 end, now()
+    from public.questions q
+   where q.id = p_question_id and q.grammar_topic_id is not null
+  on conflict (user_id, grammar_topic_id) do update set
+    attempts_count = public.user_topic_mastery.attempts_count + excluded.attempts_count,
+    correct_count  = public.user_topic_mastery.correct_count + excluded.correct_count,
+    mastery_score  = (public.user_topic_mastery.correct_count + excluded.correct_count) * 100.0
+                     / (public.user_topic_mastery.attempts_count + excluded.attempts_count),
+    last_practiced_at = now();
 
   return jsonb_build_object('is_correct', v_ok, 'explanation', v_expl);
 end $$;

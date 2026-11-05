@@ -78,7 +78,7 @@ create function public.zt_rpc_calls() returns text[] language sql immutable as $
   ]
 $$;
 
-create function public.zt_mk_lesson(p_module uuid, p_slug text, p_pos int, p_nq int)
+create function public.zt_mk_lesson(p_module uuid, p_slug text, p_pos int, p_nq int, p_topic uuid default null)
 returns void language plpgsql as $$
 declare l uuid; v uuid; s uuid; e uuid; q uuid; o1 uuid; o2 uuid; i int;
 begin
@@ -89,8 +89,8 @@ begin
     values (v, 1, 'explanation', 'Explicacao') returning id into s;
   insert into public.exercises (lesson_version_id, position, title) values (v, 1, 'Ex 1') returning id into e;
   for i in 1..p_nq loop
-    insert into public.questions (lesson_version_id, exercise_id, question_type, prompt, position)
-      values (v, e, 'multiple_choice', 'ZTQ ' || p_slug || ' ' || i, i) returning id into q;
+    insert into public.questions (lesson_version_id, exercise_id, question_type, prompt, position, grammar_topic_id)
+      values (v, e, 'multiple_choice', 'ZTQ ' || p_slug || ' ' || i, i, p_topic) returning id into q;
     insert into public.answer_options (question_id, option_text, position) values (q, 'certa', 1) returning id into o1;
     insert into public.answer_options (question_id, option_text, position) values (q, 'errada', 2) returning id into o2;
     insert into private.question_answer_keys (question_id, correct_option_id, explanation)
@@ -215,6 +215,7 @@ insert into public.lesson_sections (id, lesson_version_id, position, section_typ
 insert into public.grammar_topics (id, slug, title, category, is_published) values
   ('a0a0a0a0-0000-0000-0000-000000000011', 'lit-wild', 'lit 100% _x\y', 'lit', true),
   ('a0a0a0a0-0000-0000-0000-000000000012', 'lit-ctrl', 'lit 100 abc', 'lit', true);
+select public.zt_mk_lesson('0e0e0e0e-0000-0000-0000-000000000050', 'ztG1', 3, 2, 'a0a0a0a0-0000-0000-0000-000000000001');
 
 -- Aluno 7: nivelamento em andamento com uma questao de banco
 insert into auth.users (id, email) values ('77777777-7777-7777-7777-777777777777', 'zt7@teste');
@@ -834,6 +835,15 @@ begin
   perform public.zt_assert((r->>'total')::int = 2 and not exists (
       select 1 from jsonb_array_elements(r->'items') e where not (e->>'locked')::boolean or e->>'subtitle' is not null),
     'FAV: favoritos Premium sem plano ficam locked e sem subtitle');
+  perform public.zt_assert(
+      (select e->>'title' is null and e->>'subtitle' is null and (e->>'locked')::boolean
+              and e->>'id' = 'c0c0c0c0-0000-0000-0000-000000000003'
+              and e->>'vocabulary_id' = 'b0b0b0b0-0000-0000-0000-000000000004'
+              and e->>'access_tier' = 'premium' and e->>'favorited_at' is not null
+         from jsonb_array_elements(r->'items') e where e->>'kind' = 'phrase')
+    and (select e->>'title' = 'ztpremword' from jsonb_array_elements(r->'items') e where e->>'kind' = 'word')
+    and position('They ztpremword it' in r::text) = 0 and position('Eles ztpremword' in r::text) = 0,
+    'FAV: frase Premium locked devolve title e subtitle null (texto da frase nao aparece no jsonb)');
   r := public.get_profile_summary();
   perform public.zt_assert(r->>'plan_tier' = 'free' and (r->'review'->>'due_today')::int = 0
     and (r->'review'->>'total_scheduled')::int = 0 and (r->>'favorites_count')::int = 2,
@@ -896,6 +906,47 @@ begin
   -- aula encerrada com a questao respondida: agora elegivel
   perform public.zt_assert((public.record_review_result(p_question_id := lq, p_quality := 4::smallint)->>'repetitions')::int = 1,
     'C1: questao de aula respondida em tentativa encerrada e elegivel para revisao');
+end $$;
+reset role;
+
+-- Decisao do Gabriel: a revisao altera o dominio como a aula (aluno 7, topico sem dominio previo)
+insert into public.user_lesson_attempts (id, user_id, lesson_version_id, status, earned_points, total_points, score_pct, completed_at)
+  values ('e1e1e1e1-0000-0000-0000-000000000007', '77777777-7777-7777-7777-777777777777',
+          (select version_id from public.zt_l where slug = 'ztG1'), 'completed', 0, 2, 0, now());
+insert into public.user_exercise_attempts
+  (user_id, lesson_attempt_id, lesson_version_id, question_id, submitted_answer, is_correct, awarded_points, max_points)
+select '77777777-7777-7777-7777-777777777777', 'e1e1e1e1-0000-0000-0000-000000000007',
+       (select version_id from public.zt_l where slug = 'ztG1'), public.zt_qid('ztG1', i), '{}', false, 0, 1
+  from generate_series(1, 2) i;
+insert into public.review_schedule (user_id, question_id, due_at)
+  select '77777777-7777-7777-7777-777777777777', public.zt_qid('ztG1', i), now() - interval '1 hour'
+    from generate_series(1, 2) i;
+
+set role authenticated;
+select public.zt_as('77777777-7777-7777-7777-777777777777');
+do $$
+declare s uuid := public.start_review_session(); r jsonb; gf uuid := 'a0a0a0a0-0000-0000-0000-000000000001';
+begin
+  r := public.submit_review_answer(s, public.zt_qid('ztL2', 1), jsonb_build_object('option_id', public.zt_corr('ztL2', 1)));
+  perform public.zt_assert((select count(*) = 0 from public.user_topic_mastery)
+    and r = jsonb_build_object('is_correct', true, 'explanation', 'Explicacao ztL2 1'),
+    'MASTERY: questao sem grammar_topic_id nao cria linha; retorno inalterado');
+  r := public.submit_review_answer(s, public.zt_qid('ztG1', 1), jsonb_build_object('option_id', public.zt_corr('ztG1', 1)));
+  perform public.zt_assert((select attempts_count = 1 and correct_count = 1 and mastery_score = 100 and last_practiced_at is not null
+                              from public.user_topic_mastery where grammar_topic_id = gf)
+    and r = jsonb_build_object('is_correct', true, 'explanation', 'Explicacao ztG1 1'),
+    'MASTERY: acerto na revisao cria dominio 1/1 = 100 (formula provisoria da aula)');
+  r := public.submit_review_answer(s, public.zt_qid('ztG1', 2), jsonb_build_object('option_id', public.zt_wrong('ztG1', 2)));
+  perform public.zt_assert((select attempts_count = 2 and correct_count = 1 and mastery_score = 50
+                              from public.user_topic_mastery where grammar_topic_id = gf)
+    and not (r->>'is_correct')::boolean, 'MASTERY: erro na revisao soma tentativa: 2/1 = 50');
+  perform public.zt_assert((select count(*) = 1 from public.user_topic_mastery), 'MASTERY: so o topico da questao foi tocado');
+  r := public.get_profile_summary();
+  perform public.zt_assert(jsonb_array_length(r->'mastery') = 1 and (r->'mastery'->0->>'mastery_pct')::numeric = 50
+    and (r->'mastery'->0->>'attempts')::int = 2, 'MASTERY: get_profile_summary reflete o novo dominio');
+  perform public.zt_assert((public.search_library(p_query := 'ZT Present')->'items'->0->>'mastery_pct')::numeric = 50
+    and (public.get_library_item('grammar', gf)->'mastery'->>'attempts')::int = 2,
+    'MASTERY: search_library e get_library_item refletem o novo dominio');
 end $$;
 reset role;
 
