@@ -9,6 +9,7 @@ Implementa o Dicionário de Dados v1.0 com as decisões da revisão técnica (ve
 | `supabase/migrations/20261103000001_schema.sql` | Tabelas, constraints, chaves compostas, índices, triggers de imutabilidade |
 | `supabase/migrations/20261103000002_rls.sql` | Helpers de acesso, grants mínimos, políticas RLS, view do nivelamento |
 | `supabase/migrations/20261103000003_functions.sql` | Regras de negócio no backend (RPCs `security definer`) |
+| `supabase/migrations/20261104232828_library_review_profile.sql` | Biblioteca, favoritos, notas por seção, sessões de revisão (RPCs v2) e perfil. Endurece `record_review_result` (v1) |
 
 Aplicar com `supabase db push` (ou copiar para `supabase/migrations/` do projeto). Cada migration deve rodar uma única vez, nesta sequência (não são re-executáveis).
 
@@ -18,6 +19,14 @@ O app **nunca grava progresso**. Ele chama RPCs:
 
 `start_placement_attempt` → `submit_placement_answer` → `finish_placement_attempt` → `select_starting_level` → `get_course_overview` → `get_module_lessons` → `start_lesson_attempt` → `record_section_view` → `submit_lesson_answer` → `finish_lesson_attempt` · `record_review_result` · `refresh_my_unlocks`
 
+Biblioteca e perfil: `search_library` · `get_library_item` · `get_my_favorites` · `get_profile_summary`.
+
+Revisão (sessão): `get_review_queue` → `start_review_session` → para cada questão, `submit_review_answer` → `record_review_result_v2` (um por item) → `finish_review_session`.
+
+Favoritos e notas não usam RPC: o app grava direto nas tabelas, com RLS por dono (`user_vocabulary`, `user_favorite_examples`, `user_notes`).
+
+Contrato completo (assinaturas, retornos, erros e exemplos): `../myfluenti-docs/docs/dados/api.md`.
+
 Códigos de erro úteis (`42501`): mensagem `module_locked` (módulo ainda não liberado) e `premium_required` (módulo Premium sem plano).
 
 Conteúdo (aulas, questões, alternativas) é lido por `select` normal; o RLS já aplica liberação e plano. O gabarito fica em `private.*` e só é lido por funções.
@@ -25,6 +34,8 @@ Conteúdo (aulas, questões, alternativas) é lido por `select` normal; o RLS j�
 ## Testes
 
 `tests/10_smoke_test.sql` roda os critérios NIV, AUL, MOD, REV e SEC com 86 verificações (59 asserções e 27 erros esperados). Cada uma imprime `NOTICE:  PASS`, e a última linha imprime `===== TODOS OS TESTES PASSARAM =====`. Atenção: `grep -c PASS` devolve 87 porque também conta essa linha final.
+
+`tests/20_library_review_profile_test.sql` cobre Biblioteca, favoritos, notas, revisão e perfil, com 203 verificações. Roda **depois** do smoke, no mesmo banco, sem `db reset` entre os dois. Termina com `===== TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM =====`.
 
 ### No Supabase local (referência)
 
@@ -34,6 +45,7 @@ O teste roda **sem o stub** e sem alterações. O `auth.users` real aceita o ins
 npx -y supabase@2.121.0 start -x realtime,storage-api,imgproxy,mailpit,studio,edge-runtime,logflare,vector,supavisor,postgres-meta
 npx -y supabase@2.121.0 db reset
 Get-Content tests/10_smoke_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
+Get-Content tests/20_library_review_profile_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 npx -y supabase@2.121.0 db reset   # apaga os dados e as tabelas zz_* criadas pelo teste
 npx -y supabase@2.121.0 db advisors --local --type all
 ```
@@ -51,6 +63,8 @@ psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261103000001_schema.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261103000002_rls.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261103000003_functions.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/10_smoke_test.sql
+psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261104232828_library_review_profile.sql
+psql -v ON_ERROR_STOP=1 -d mf -f tests/20_library_review_profile_test.sql
 ```
 
 ## Diferenças em relação ao Dicionário v1.0
@@ -69,6 +83,5 @@ psql -v ON_ERROR_STOP=1 -d mf -f tests/10_smoke_test.sql
 ## Ainda não implementado
 
 - Autoria/publicação de conteúdo e seed (hoje via painel ou `service_role`).
-- Sessões de revisão com `review_sessions` + `user_exercise_attempts` (tabelas prontas; falta a RPC de correção da revisão).
 - Mudança automática de `profiles.current_level_id` ao concluir um nível.
 - Regra de "refazer aula" após nova versão (`requires_relearning` / `needs_update`).

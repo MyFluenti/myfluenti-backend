@@ -42,3 +42,8 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f tests/10_smoke_test.sql | tee test-output.txt
           grep -q "TODOS OS TESTES PASSARAM" test-output.txt
+
+      - name: Run library, review and profile tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/20_library_review_profile_test.sql | tee test-output-20.txt
+          grep -q "TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM" test-output-20.txt

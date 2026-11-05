@@ -13,7 +13,8 @@ supabase/
 tests/
   00_supabase_stub.sql # simula auth e papéis, SOMENTE para PostgreSQL comum
   10_smoke_test.sql    # teste de ponta a ponta (NIV, AUL, MOD, REV, SEC)
-docs/api.md            # contrato das RPCs (a criar)
+  20_library_review_profile_test.sql  # Biblioteca, revisão, perfil, favoritos e notas (roda depois do 10)
+# Contrato das RPCs: myfluenti-docs/docs/dados/api.md
 .github/workflows/     # test, deploy-staging, deploy-prod (a criar)
 ```
 
@@ -36,13 +37,17 @@ psql -v ON_ERROR_STOP=1 -d mf -f tests/00_supabase_stub.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261103000001_schema.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261103000002_rls.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261103000003_functions.sql
+psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261104232828_library_review_profile.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/10_smoke_test.sql
+psql -v ON_ERROR_STOP=1 -d mf -f tests/20_library_review_profile_test.sql
 ```
 
-Esperado: 86 linhas `NOTICE:  PASS` e a última linha `TODOS OS TESTES PASSARAM`. O stub não deve ser aplicado no Supabase real.
+Esperado: 86 linhas `NOTICE:  PASS` no smoke (última linha `TODOS OS TESTES PASSARAM`) e 203 no tests/20 (última linha `TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM`). O stub não deve ser aplicado no Supabase real.
 
 No Supabase local, o mesmo teste roda sem stub e sem alterações (comandos no README, seção "No Supabase local"). Rode `supabase db reset` depois, para apagar os dados de teste.
 
 ## Pendências deste repositório
 
-Rodar em staging; levar o teste no Supabase local para o CI; criar `docs/api.md`; decidir sobre o aviso `security_definer_view` em `placement_test_items` (intencional, ver PR de testes locais); RPC de revisão com `review_sessions`; troca de nível ao concluir um nível; regra de refazer aula após nova versão (`requires_relearning`, `needs_update`).
+Rodar em staging; levar o teste no Supabase local para o CI; decidir sobre o aviso `security_definer_view` em `placement_test_items` (intencional, ver PR de testes locais); troca de nível ao concluir um nível; regra de refazer aula após nova versão (`requires_relearning`, `needs_update`).
+
+O teste esperado agora inclui o `tests/20_library_review_profile_test.sql`, que roda depois do `10_smoke_test.sql` no mesmo banco: 86 PASS no smoke e 203 PASS no tests/20.
