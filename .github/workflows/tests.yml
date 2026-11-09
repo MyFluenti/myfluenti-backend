@@ -47,3 +47,8 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f tests/20_library_review_profile_test.sql | tee test-output-20.txt
           grep -q "TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM" test-output-20.txt
+
+      - name: Run content delivery tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/30_content_delivery_test.sql | tee test-output-30.txt
+          grep -q "TESTES ENTREGA DE CONTEUDO PASSARAM" test-output-30.txt

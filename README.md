@@ -31,6 +31,21 @@ Códigos de erro úteis (`42501`): mensagem `module_locked` (módulo ainda não 
 
 Conteúdo (aulas, questões, alternativas) é lido por `select` normal; o RLS já aplica liberação e plano. O gabarito fica em `private.*` e só é lido por funções.
 
+## Dados de desenvolvimento
+
+O `supabase db reset` **não** carrega dados (o `supabase/seed.sql` é só comentário), e os testes 10, 20 e 30 rodam com `db reset` normal. Para ter conteúdo fictício no banco **local** (6 níveis, 2 módulos A1, 4 aulas, 2 tópicos, 3 palavras e um nivelamento de 30 questões, tudo com slug `dev-*` e "(TESTE)"):
+
+```powershell
+supabase start
+.\scripts\load-dev-seed.ps1        # Windows (PowerShell)
+```
+
+```bash
+./scripts/load-dev-seed.sh         # Linux/macOS/Git Bash
+```
+
+Os scripts rodam `docker exec -i supabase_db_myfluenti-backend psql ... < supabase/dev-seed/dev_content.sql` e falham com mensagem clara se o contêiner não existir. **DADOS FICTÍCIOS DE TESTE, NUNCA EM STAGING/PRODUÇÃO.** O seed roda uma vez: na segunda vez aborta com "DEV SEED JA CARREGADO"; para recomeçar, `supabase db reset`. Rode o seed **depois** dos testes (os testes não dependem dele). O formato do conteúdo (`"v":1`, blocos) é provisório.
+
 ## Testes
 
 `tests/10_smoke_test.sql` roda os critérios NIV, AUL, MOD, REV e SEC com 86 verificações (59 asserções e 27 erros esperados). Cada uma imprime `NOTICE:  PASS`, e a última linha imprime `===== TODOS OS TESTES PASSARAM =====`. Atenção: `grep -c PASS` devolve 87 porque também conta essa linha final.
@@ -38,6 +53,8 @@ Conteúdo (aulas, questões, alternativas) é lido por `select` normal; o RLS j�
 `tests/20_library_review_profile_test.sql` cobre Biblioteca, favoritos, notas, revisão e perfil, com 244 verificações. Roda **depois** do smoke, no mesmo banco, sem `db reset` entre os dois. Termina com `===== TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM =====`.
 
 ### No Supabase local (referência)
+
+`tests/30_content_delivery_test.sql` cobre `get_lesson_content`, `get_placement_items` e o nome no cadastro. Roda depois do 20, no mesmo banco, e termina com `===== TESTES ENTREGA DE CONTEUDO PASSARAM =====`.
 
 O teste roda **sem o stub** e sem alterações. O `auth.users` real aceita o insert só com `id` e `email`, porque as demais colunas do GoTrue são anuláveis. O `auth.uid()` real lê `request.jwt.claim.sub`, que é o claim que o teste define. O teste também passa como `postgres`, que no Supabase não é superusuário.
 
