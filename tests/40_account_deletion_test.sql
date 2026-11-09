@@ -195,20 +195,10 @@ select public.zd_assert(not exists (
             or has_function_privilege('anon', p.oid, 'EXECUTE')
             or not has_function_privilege('authenticated', p.oid, 'EXECUTE'))),
   'SEC: security definer, search_path vazio, sem execute para anon, com execute para authenticated');
--- No Supabase local, o "db reset" reconcede EXECUTE a service_role em todas as funcoes de public
--- depois das migrations (mesmo as antigas); o revoke da migration so vale no stub / em db push.
--- service_role ignora RLS de qualquer forma e, sem auth.uid(), a RPC falha com 28000.
 select public.zd_assert(has_function_privilege('authenticated', 'public.delete_my_account(text)', 'EXECUTE'),
   'SEC: authenticated executa delete_my_account');
-do $$
-begin
-  if to_regclass('auth.sessions') is not null then
-    raise notice 'SKIP: service_role recebe EXECUTE do db reset local; verificado so no stub';
-    return;
-  end if;
-  perform public.zd_assert(not has_function_privilege('service_role', 'public.delete_my_account(text)', 'EXECUTE'),
-    'SEC: service_role sem EXECUTE (revoke da migration)');
-end $$;
+select public.zd_assert(not has_function_privilege('service_role', 'public.delete_my_account(text)', 'EXECUTE'),
+  'SEC: service_role sem EXECUTE (so authenticated executa)');
 select public.zd_assert(not has_function_privilege('anon', 'public.delete_my_account(text)', 'EXECUTE'),
   'SEC: has_function_privilege(anon) e falso');
 select public.zd_assert(
@@ -287,11 +277,12 @@ begin
     ('a0d0d0d0-0000-0000-0000-00000000000e', '{"action":"user_recovery_requested","traits":{"user_email":"zd-a@teste"}}'),
     ('a0d0d0d0-0000-0000-0000-00000000000b', '{"action":"login","actor_id":"2d2d2d2d-2222-2222-2222-222222222222","actor_username":"zd-b@teste","traits":{}}'),
     ('a0d0d0d0-0000-0000-0000-0000000000bb', '{"action":"login","actor_username":"zd-b@teste","traits":{"user_id":"2d2d2d2d-2222-2222-2222-222222222222"}}'),
+    ('a0d0d0d0-0000-0000-0000-0000000000ba', '{"action":"login","actor_id":"2d2d2d2d-2222-2222-2222-222222222222","actor_username":"zd-a@teste","traits":{}}'),
     ('a0d0d0d0-0000-0000-0000-0000000000ee', '{"action":"login","actor_username":"zd-outro@teste","traits":{}}');
   insert into auth.flow_state (id, user_id, provider_type, authentication_method) values
     ('f0d0d0d0-0000-0000-0000-00000000000a', '1d1d1d1d-1111-1111-1111-111111111111', 'email', 'password'),
     ('f0d0d0d0-0000-0000-0000-00000000000b', '2d2d2d2d-2222-2222-2222-222222222222', 'email', 'password');
-  perform public.zd_assert((select count(*) = 7 from auth.audit_log_entries where id::text like 'a0d0d0d0%')
+  perform public.zd_assert((select count(*) = 8 from auth.audit_log_entries where id::text like 'a0d0d0d0%')
     and (select count(*) = 2 from auth.flow_state where id::text like 'f0d0d0d0%'),
     'RASTRO: linhas de audit_log_entries e flow_state de A e B criadas');
 end $$;
@@ -394,8 +385,8 @@ begin
     and not exists (select 1 from auth.flow_state where id = 'f0d0d0d0-0000-0000-0000-00000000000a'),
     'RASTRO: audit_log_entries (actor_id, traits.user_id, actor_username, traits.user_email) e flow_state de A sumiram');
   perform public.zd_assert(
-    (select count(*) = 3 from auth.audit_log_entries where id::text in
-       ('a0d0d0d0-0000-0000-0000-00000000000b', 'a0d0d0d0-0000-0000-0000-0000000000bb', 'a0d0d0d0-0000-0000-0000-0000000000ee'))
+    (select count(*) = 4 from auth.audit_log_entries where id::text in
+       ('a0d0d0d0-0000-0000-0000-00000000000b', 'a0d0d0d0-0000-0000-0000-0000000000bb', 'a0d0d0d0-0000-0000-0000-0000000000ba', 'a0d0d0d0-0000-0000-0000-0000000000ee'))
     and exists (select 1 from auth.flow_state where id = 'f0d0d0d0-0000-0000-0000-00000000000b'),
     'RASTRO: linhas de B e de terceiros em audit_log_entries e flow_state ficaram intactas');
 end $$;

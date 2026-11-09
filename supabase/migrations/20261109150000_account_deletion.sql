@@ -31,10 +31,11 @@ revoke all on private.account_deletions from public, anon, authenticated;
 -- 3600 s), mas a conta nao tem mais dados e nenhuma RPC de escrita consegue
 -- gravar progresso para ela. O app deve descartar a sessao local apos o retorno.
 --
--- Rastro fora da cascata (decisao do Gabriel: apagar tambem): antes do delete em
--- auth.users removemos de auth.audit_log_entries as linhas em que o aluno e ator
+-- Rastro fora da cascata (decisao do Gabriel: apagar tambem): depois do delete em
+-- auth.users (e confirmada a exclusao) removemos de auth.audit_log_entries as linhas em que o aluno e ator
 -- (payload.actor_id), alvo (payload.traits.user_id) ou citado pelo e-mail
--- (payload.actor_username, payload.traits.user_email), e de auth.flow_state as
+-- (payload.actor_username, payload.traits.user_email; so se actor_id/traits.user_id
+-- estiver vazio ou for o dele), e de auth.flow_state as
 -- linhas dele (user_id). So roda se as tabelas existirem (o stub do CI nao as tem).
 -- Linhas de outros alunos nao sao tocadas.
 --
@@ -56,22 +57,28 @@ begin
 
   select u.email into v_email from auth.users u where u.id = v_uid;
 
-  if to_regclass('auth.audit_log_entries') is not null then
-    execute 'delete from auth.audit_log_entries
-              where payload->>''actor_id'' = $1
-                 or payload->''traits''->>''user_id'' = $1
-                 or ($2 is not null and (lower(payload->>''actor_username'') = lower($2)
-                                      or lower(payload->''traits''->>''user_email'') = lower($2)))'
-      using v_uid::text, v_email;
-  end if;
-  if to_regclass('auth.flow_state') is not null then
-    execute 'delete from auth.flow_state where user_id = $1' using v_uid;
-  end if;
-
   delete from auth.users where id = v_uid;
   get diagnostics v_deleted = row_count;
   if v_deleted = 0 then
     raise exception 'account_not_found' using errcode = 'P0002';
+  end if;
+
+  -- Rastro fora da cascata, so depois de confirmar a exclusao (uma linha de auditoria
+  -- gravada por outra transacao no intervalo nao fica para tras). O e-mail so casa
+  -- quando a linha nao pertence a outra conta (e-mail reutilizado, usuario SSO).
+  if to_regclass('auth.audit_log_entries') is not null then
+    execute 'delete from auth.audit_log_entries
+              where payload->>''actor_id'' = $1
+                 or payload->''traits''->>''user_id'' = $1
+                 or ($2 is not null and (
+                      (coalesce(payload->>''actor_id'', '''') in ('''', $1)
+                         and lower(payload->>''actor_username'') = lower($2))
+                      or (coalesce(payload->''traits''->>''user_id'', '''') in ('''', $1)
+                         and lower(payload->''traits''->>''user_email'') = lower($2))))'
+      using v_uid::text, v_email;
+  end if;
+  if to_regclass('auth.flow_state') is not null then
+    execute 'delete from auth.flow_state where user_id = $1' using v_uid;
   end if;
 
   insert into private.account_deletions default values;
