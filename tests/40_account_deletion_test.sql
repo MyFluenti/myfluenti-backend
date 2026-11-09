@@ -219,7 +219,7 @@ reset role;
 
 set role authenticated;
 select set_config('request.jwt.claim.sub', '', false);
-select public.zd_expect_error($q$select public.delete_my_account('EXCLUIR')$q$, '42501', 'Autenticacao obrigatoria');
+select public.zd_expect_error($q$select public.delete_my_account('EXCLUIR')$q$, '28000', 'Autenticacao obrigatoria');
 reset role;
 
 -- Dados dos dois alunos
