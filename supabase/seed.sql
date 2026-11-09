@@ -1,0 +1,4 @@
+-- Seed automatico do `supabase db reset`: INTENCIONALMENTE VAZIO.
+-- Os testes (tests/10, 20 e 30) rodam com `db reset` normal, sem dados.
+-- Dados ficticios de desenvolvimento ficam em supabase/dev-seed/dev_content.sql
+-- e sao carregados SO no banco local, sob demanda (scripts/load-dev-seed.ps1 ou .sh).
