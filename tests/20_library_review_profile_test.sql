@@ -604,13 +604,13 @@ begin
 
   r := public.record_review_result_v2(s1, 'easy', p_question_id := public.zt_qid('ztL1', 1));
   perform public.zt_assert((r->>'repetitions')::int = 0 and (r->>'next_review_in_days')::numeric = 1,
-    'REV: errar e mandar easy forca lapso (repetitions 0)');
+    'REV: errar e mandar easy: o botao e ignorado e forca lapso (repetitions 0)');
   perform public.zt_assert((select last_quality = 2 and lapses = 1 and repetitions = 0 from public.review_schedule
                              where question_id = public.zt_qid('ztL1', 1)),
     'REV: quality 2 e lapso gravados no review_schedule');
-  perform public.zt_assert((select rating = 'easy' and quality = 2 and is_correct is false
+  perform public.zt_assert((select rating is null and quality = 2 and is_correct is false
                             from public.review_session_items where session_id = s1 and question_id = public.zt_qid('ztL1', 1)),
-    'REV: review_session_items guarda rating easy, quality 2 e is_correct false');
+    'REV: erro com easy: review_session_items grava rating null, quality 2 e is_correct false');
   perform public.zt_expect_error(format(
     $q$select public.record_review_result_v2(%L, 'good', p_question_id := %L)$q$, s1, public.zt_qid('ztL1', 1)),
     '23505', 'already_reviewed');
@@ -656,10 +656,10 @@ begin
   perform public.zt_assert(done1 is null, 'REV: sessao aberta antes de finalizar');
   fin := public.finish_review_session(s1, 'UTC');
   perform public.zt_assert((fin->>'session_id')::uuid = s1 and (fin->>'reviewed_count')::int = 4
-    and (fin->>'hard')::int = 1 and (fin->>'good')::int = 2 and (fin->>'easy')::int = 1
+    and (fin->>'hard')::int = 1 and (fin->>'good')::int = 2 and (fin->>'easy')::int = 0
     and (fin->>'correct')::int = 1 and (fin->>'incorrect')::int = 1
     and (fin->>'remaining_due')::int = 1 and fin->>'next_due_at' is not null,
-    'REV: resumo da sessao (4 revisados, 1 hard, 2 good, 1 easy, 1 certa, 1 errada, 1 ainda vencida)');
+    'REV: resumo da sessao (4 revisados, 1 hard, 2 good, 0 easy (a errada nao tem avaliacao), 1 certa, 1 errada, 1 ainda vencida)');
   perform public.zt_assert(public.zt_no_leak(fin), 'SEC: finish_review_session nao devolve id de alternativa correta');
   done1 := (select completed_at from public.review_sessions where id = s1);
   perform public.zt_assert(done1 is not null, 'REV: sessao fechada');
@@ -1135,6 +1135,105 @@ begin
 end $$;
 reset role;
 
+-- ---------------------------------------------------------------------
+-- Resposta errada na revisao: o app nao manda avaliacao (aluno 9)
+-- ---------------------------------------------------------------------
+insert into auth.users (id, email) values ('99999999-9999-9999-9999-999999999999', 'zt9@teste');
+insert into public.user_lesson_attempts (id, user_id, lesson_version_id, status, earned_points, total_points, score_pct, completed_at)
+  select ('e1e1e1e1-0000-0000-0000-0000000000' || m.n)::uuid, '99999999-9999-9999-9999-999999999999', l.version_id, 'completed', 0, 1, 0, now()
+    from (values ('ztL1', '91'), ('ztL2', '92'), ('ztG1', '93')) m(slug, n) join public.zt_l l on l.slug = m.slug;
+insert into public.user_exercise_attempts
+  (user_id, lesson_attempt_id, lesson_version_id, question_id, submitted_answer, is_correct, awarded_points, max_points)
+select '99999999-9999-9999-9999-999999999999', ('e1e1e1e1-0000-0000-0000-0000000000' || m.n)::uuid, l.version_id, q.question_id, '{}', false, 0, 1
+  from (values ('ztL1', '91'), ('ztL2', '92'), ('ztG1', '93')) m(slug, n)
+  join public.zt_l l on l.slug = m.slug join public.zt_q q on q.slug = m.slug;
+insert into public.review_schedule (user_id, question_id, due_at)
+  select '99999999-9999-9999-9999-999999999999', q.question_id, now() - interval '1 hour'
+    from public.zt_q q where q.slug in ('ztL1', 'ztL2', 'ztG1');
+
+set role authenticated;
+select public.zt_as('99999999-9999-9999-9999-999999999999');
+do $$
+declare s uuid := public.start_review_session(); r jsonb; fin jsonb; b record; a record;
+        qa uuid := public.zt_qid('ztL1', 1); qb uuid := public.zt_qid('ztL1', 2); qc uuid := public.zt_qid('ztL2', 1);
+        qd uuid := public.zt_qid('ztG1', 1); qe uuid := public.zt_qid('ztG1', 2); qf uuid := public.zt_qid('ztG1', 3);
+begin
+  -- quatro erros
+  perform public.submit_review_answer(s, qa, jsonb_build_object('option_id', public.zt_wrong('ztL1', 1)));
+  perform public.submit_review_answer(s, qb, jsonb_build_object('option_id', public.zt_wrong('ztL1', 2)));
+  perform public.submit_review_answer(s, qc, jsonb_build_object('option_id', public.zt_wrong('ztL2', 1)));
+  perform public.submit_review_answer(s, qd, jsonb_build_object('option_id', public.zt_wrong('ztG1', 1)));
+
+  -- (1) p_rating ausente (chamada nomeada)
+  r := public.record_review_result_v2(p_session_id := s, p_question_id := qa);
+  perform public.zt_assert((r->>'repetitions')::int = 0
+    and (select rating is null and quality = 2 and is_correct is false from public.review_session_items where session_id = s and question_id = qa)
+    and (select last_quality = 2 and repetitions = 0 from public.review_schedule where question_id = qa and user_id = auth.uid()),
+    'RATING: erro com p_rating ausente e aceito (quality 2, repetitions 0, item com rating null)');
+  -- (2) p_rating null explicito (posicional)
+  r := public.record_review_result_v2(s, null, null, null, qb);
+  perform public.zt_assert((r->>'repetitions')::int = 0
+    and (select rating is null and quality = 2 and is_correct is false from public.review_session_items where session_id = s and question_id = qb),
+    'RATING: erro com p_rating null explicito e aceito');
+  -- (3) 'easy' ignorado
+  r := public.record_review_result_v2(s, 'easy', p_question_id := qc);
+  perform public.zt_assert((select rating is null and quality = 2 from public.review_session_items where session_id = s and question_id = qc)
+    and (select last_quality = 2 and repetitions = 0 from public.review_schedule where question_id = qc and user_id = auth.uid()),
+    'RATING: erro com easy: botao ignorado, item com rating null e last_quality 2 no schedule');
+  -- (4) 'ok' invalido tambem ignorado
+  r := public.record_review_result_v2(s, 'ok', p_question_id := qd);
+  perform public.zt_assert((select rating is null and quality = 2 and is_correct is false from public.review_session_items where session_id = s and question_id = qd),
+    'RATING: erro com rating invalido (ok) tambem e ignorado e aceito');
+
+  -- (5) acerto com p_rating null explicito
+  perform public.submit_review_answer(s, qe, jsonb_build_object('option_id', public.zt_corr('ztG1', 2)));
+  select last_reviewed_at as lr, repetitions as rep into b from public.review_schedule where question_id = qe and user_id = auth.uid();
+  perform public.zt_expect_error(format($q$select public.record_review_result_v2(%L, null, null, null, %L)$q$, s, qe),
+    '22023', 'rating_required');
+  select last_reviewed_at as lr, repetitions as rep into a from public.review_schedule where question_id = qe and user_id = auth.uid();
+  perform public.zt_assert(not exists (select 1 from public.review_session_items where session_id = s and question_id = qe)
+    and a.lr is not distinct from b.lr and a.rep = b.rep,
+    'RATING: acerto sem rating (null) recusado: nenhuma linha em review_session_items e schedule intacto');
+  -- (6) acerto com p_rating ausente
+  perform public.submit_review_answer(s, qf, jsonb_build_object('option_id', public.zt_corr('ztG1', 3)));
+  perform public.zt_expect_error(format($q$select public.record_review_result_v2(p_session_id := %L, p_question_id := %L)$q$, s, qf),
+    '22023', 'rating_required');
+  -- (7) vocabulario e topico sem rating
+  perform public.zt_expect_error(format(
+    $q$select public.record_review_result_v2(p_session_id := %L, p_vocabulary_id := 'b0b0b0b0-0000-0000-0000-000000000003')$q$, s),
+    '22023', 'rating_required');
+  perform public.zt_expect_error(format(
+    $q$select public.record_review_result_v2(p_session_id := %L, p_grammar_topic_id := 'a0a0a0a0-0000-0000-0000-000000000001')$q$, s),
+    '22023', 'rating_required');
+  perform public.zt_expect_error(format($q$select public.record_review_result_v2(%L, 'ok', p_question_id := %L)$q$, s, qe),
+    '22023', 'invalid_rating');
+  perform public.zt_assert((select count(*) = 4 from public.review_session_items where session_id = s),
+    'RATING: so os 4 erros foram registrados ate aqui');
+  -- ja avaliado continua protegido, mesmo com rating ignorado
+  perform public.zt_expect_error(format($q$select public.record_review_result_v2(%L, null, null, null, %L)$q$, s, qa),
+    '23505', 'already_reviewed');
+
+  -- (9) fim da sessao: um acerto avaliado 'good' + 4 erros
+  perform public.record_review_result_v2(s, 'good', p_question_id := qe);
+  fin := public.finish_review_session(s);
+  perform public.zt_assert((fin->>'reviewed_count')::int = 5 and (fin->>'incorrect')::int = 4 and (fin->>'correct')::int = 2
+    and (fin->>'hard')::int = 0 and (fin->>'good')::int = 1 and (fin->>'easy')::int = 0,
+    'RATING: finish conta a questao errada em reviewed_count e incorrect, sem somar em hard/good/easy');
+end $$;
+reset role;
+
+-- (8) a constraint barra combinacoes incoerentes (como postgres)
+select public.zt_expect_error(format(
+  $q$insert into public.review_session_items (session_id, user_id, vocabulary_id, rating, quality, is_correct)
+     values (%L, '99999999-9999-9999-9999-999999999999', 'b0b0b0b0-0000-0000-0000-000000000003', null, 4, true)$q$,
+  (select id from public.review_sessions where user_id = '99999999-9999-9999-9999-999999999999' limit 1)),
+  '23514', 'review_session_items_rating_iff_not_wrong');
+select public.zt_expect_error(format(
+  $q$insert into public.review_session_items (session_id, user_id, vocabulary_id, rating, quality, is_correct)
+     values (%L, '99999999-9999-9999-9999-999999999999', 'b0b0b0b0-0000-0000-0000-000000000003', 'good', 4, false)$q$,
+  (select id from public.review_sessions where user_id = '99999999-9999-9999-9999-999999999999' limit 1)),
+  '23514', 'review_session_items_rating_iff_not_wrong');
+
 -- S4: uma unica sessao aberta por aluno
 select public.zt_expect_error(
   $q$insert into public.review_sessions (user_id) values ('44444444-4444-4444-4444-444444444444')$q$, '23505');
@@ -1166,7 +1265,7 @@ select public.zt_assert(not exists (
 
 delete from auth.users where id in ('44444444-4444-4444-4444-444444444444',
   '55555555-5555-5555-5555-555555555555', '66666666-6666-6666-6666-666666666666',
-  '77777777-7777-7777-7777-777777777777', '88888888-8888-8888-8888-888888888888');
+  '77777777-7777-7777-7777-777777777777', '88888888-8888-8888-8888-888888888888', '99999999-9999-9999-9999-999999999999');
 select public.zt_assert(not exists (select 1 from public.review_session_items)
   and not exists (select 1 from public.user_favorite_examples)
   and not exists (select 1 from public.review_sessions)

@@ -102,12 +102,14 @@ create table public.review_session_items (
   vocabulary_id     uuid references public.vocabulary(id),
   grammar_topic_id  uuid references public.grammar_topics(id),
   question_id       uuid references public.questions(id),
-  rating            text not null check (rating in ('hard','good','easy')),
+  rating            text check (rating in ('hard','good','easy')),   -- null = resposta errada (sem avaliacao)
   quality           smallint not null check (quality between 0 and 5),
   is_correct        boolean,
   reviewed_at       timestamptz not null default now(),
   constraint review_session_items_one_item
     check (num_nonnulls(vocabulary_id, grammar_topic_id, question_id) = 1),
+  constraint review_session_items_rating_iff_not_wrong
+    check ((rating is null) = (is_correct is not distinct from false)),
   foreign key (session_id, user_id)
     references public.review_sessions(id, user_id) on delete cascade
 );
@@ -800,11 +802,12 @@ end $$;
 -- =====================================================================
 -- B7. record_review_result_v2 (o v1 mantem assinatura e retorno; foi endurecido acima com not_in_review_queue)
 -- =====================================================================
--- PROVISORIO: botao -> qualidade SM-2: hard=3, good=4, easy=5.
--- PROVISORIO: questao errada nesta sessao forca quality = 2 (lapso), qualquer que seja o botao.
+-- PROVISORIO: botao -> qualidade SM-2: hard=3, good=4, easy=5 (acerto, vocabulario e topico exigem p_rating).
+-- PROVISORIO: questao ERRADA nesta sessao forca quality = 2 (lapso); p_rating e IGNORADO (pode vir
+-- nulo, ausente ou ate invalido) e o item grava rating null.
 create or replace function public.record_review_result_v2(
   p_session_id uuid,
-  p_rating text,
+  p_rating text default null,
   p_vocabulary_id uuid default null,
   p_grammar_topic_id uuid default null,
   p_question_id uuid default null)
@@ -813,14 +816,12 @@ language plpgsql security definer set search_path = '' as $$
 declare
   v_uid uuid := private.require_user();
   v_quality integer;
+  v_rating text;
   v_is_correct boolean;
   v_res jsonb;
 begin
   perform private.lock_open_review_session(v_uid, p_session_id);
 
-  if p_rating is null or p_rating not in ('hard','good','easy') then
-    raise exception 'invalid_rating' using errcode = '22023';
-  end if;
   if num_nonnulls(p_vocabulary_id, p_grammar_topic_id, p_question_id) <> 1 then
     raise exception 'invalid_item' using errcode = '22023';
   end if;
@@ -846,14 +847,24 @@ begin
     raise exception 'already_reviewed' using errcode = '23505';
   end if;
 
-  v_quality := case p_rating when 'hard' then 3 when 'good' then 4 else 5 end;
   if p_question_id is not null then
     select x.is_correct into v_is_correct
       from public.user_exercise_attempts x
      where x.review_session_id = p_session_id and x.question_id = p_question_id;
-    if v_is_correct is false then
-      v_quality := 2;
+  end if;
+
+  if v_is_correct is false then
+    v_quality := 2;            -- erro: lapso; p_rating ignorado
+    v_rating := null;
+  else
+    if p_rating is null then
+      raise exception 'rating_required' using errcode = '22023';
     end if;
+    if p_rating not in ('hard','good','easy') then
+      raise exception 'invalid_rating' using errcode = '22023';
+    end if;
+    v_rating := p_rating;
+    v_quality := case p_rating when 'hard' then 3 when 'good' then 4 else 5 end;
   end if;
 
   -- v1 valida o acesso ao item e aplica o SM-2
@@ -867,7 +878,7 @@ begin
     (session_id, user_id, vocabulary_id, grammar_topic_id, question_id,
      rating, quality, is_correct)
   values (p_session_id, v_uid, p_vocabulary_id, p_grammar_topic_id, p_question_id,
-          p_rating, v_quality::smallint, v_is_correct);
+          v_rating, v_quality::smallint, v_is_correct);
 
   return v_res;
 end $$;
