@@ -31,6 +31,13 @@ revoke all on private.account_deletions from public, anon, authenticated;
 -- 3600 s), mas a conta nao tem mais dados e nenhuma RPC de escrita consegue
 -- gravar progresso para ela. O app deve descartar a sessao local apos o retorno.
 --
+-- Rastro fora da cascata (decisao do Gabriel: apagar tambem): antes do delete em
+-- auth.users removemos de auth.audit_log_entries as linhas em que o aluno e ator
+-- (payload.actor_id), alvo (payload.traits.user_id) ou citado pelo e-mail
+-- (payload.actor_username, payload.traits.user_email), e de auth.flow_state as
+-- linhas dele (user_id). So roda se as tabelas existirem (o stub do CI nao as tem).
+-- Linhas de outros alunos nao sao tocadas.
+--
 -- Erros: 28000 'Autenticacao obrigatoria' (private.require_user) (sem uid), 22023 'confirmation_required',
 --        P0002 'account_not_found' (JWT valido de conta ja apagada).
 -- Nao registra id nem e-mail em log.
@@ -41,9 +48,24 @@ language plpgsql security definer set search_path = '' as $$
 declare
   v_uid uuid := private.require_user();
   v_deleted integer;
+  v_email text;
 begin
   if p_confirmation is distinct from 'EXCLUIR' then
     raise exception 'confirmation_required' using errcode = '22023';
+  end if;
+
+  select u.email into v_email from auth.users u where u.id = v_uid;
+
+  if to_regclass('auth.audit_log_entries') is not null then
+    execute 'delete from auth.audit_log_entries
+              where payload->>''actor_id'' = $1
+                 or payload->''traits''->>''user_id'' = $1
+                 or ($2 is not null and (lower(payload->>''actor_username'') = lower($2)
+                                      or lower(payload->''traits''->>''user_email'') = lower($2)))'
+      using v_uid::text, v_email;
+  end if;
+  if to_regclass('auth.flow_state') is not null then
+    execute 'delete from auth.flow_state where user_id = $1' using v_uid;
   end if;
 
   delete from auth.users where id = v_uid;
@@ -56,5 +78,5 @@ begin
   return jsonb_build_object('deleted', true);
 end $$;
 
-revoke execute on function public.delete_my_account(text) from public, anon;
+revoke execute on function public.delete_my_account(text) from public, anon, service_role;
 grant execute on function public.delete_my_account(text) to authenticated;
