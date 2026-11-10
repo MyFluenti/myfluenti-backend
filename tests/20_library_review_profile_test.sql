@@ -109,16 +109,13 @@ insert into auth.users (id, email) values
   ('55555555-5555-5555-5555-555555555555', 'zt5@teste'),
   ('66666666-6666-6666-6666-666666666666', 'zt6@teste');
 
-insert into public.levels (code, title, position) values
-  ('A1', 'Iniciante', 1), ('A2', 'Basico', 2), ('B1', 'Intermediario', 3),
-  ('B2', 'Intermediario avancado', 4), ('C1', 'Avancado', 5), ('C2', 'Dominio', 6)
-on conflict (code) do nothing;
+-- Niveis A1..C2 vem da migration 009 (dado de referencia).
 
-insert into public.modules (id, level_id, title, position, access_tier, is_published) values
+insert into public.modules (id, level_id, slug, title, position, access_tier, is_published) values
   ('0e0e0e0e-0000-0000-0000-000000000050', (select id from public.levels where code = 'A1'),
-   'ZT M50 free', 50, 'free', true),
+   'zt-m50', 'ZT M50 free', 50, 'free', true),
   ('0e0e0e0e-0000-0000-0000-000000000051', (select id from public.levels where code = 'A1'),
-   'ZT M51 premium', 51, 'premium', true);
+   'zt-m51', 'ZT M51 premium', 51, 'premium', true);
 
 select public.zt_mk_lesson('0e0e0e0e-0000-0000-0000-000000000050', 'ztL1', 1, 2);
 select public.zt_mk_lesson('0e0e0e0e-0000-0000-0000-000000000050', 'ztL2', 2, 1);

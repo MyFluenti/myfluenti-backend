@@ -113,15 +113,12 @@ insert into auth.users (id, email) values
   ('2c2c2c2c-2222-2222-2222-222222222222', 'zc-b@teste'),
   ('3c3c3c3c-3333-3333-3333-333333333333', 'zc-p@teste');
 
-insert into public.levels (code, title, position) values
-  ('A1', 'Iniciante', 1), ('A2', 'Basico', 2), ('B1', 'Intermediario', 3),
-  ('B2', 'Intermediario avancado', 4), ('C1', 'Avancado', 5), ('C2', 'Dominio', 6)
-on conflict (code) do nothing;
+-- Niveis A1..C2 vem da migration 009 (dado de referencia).
 
-insert into public.modules (id, level_id, title, position, access_tier, is_published) values
-  ('0c0c0c0c-0000-0000-0000-000000000061', (select id from public.levels where code = 'A1'), 'ZC free',    61, 'free',    true),
-  ('0c0c0c0c-0000-0000-0000-000000000062', (select id from public.levels where code = 'A1'), 'ZC premium', 62, 'premium', true),
-  ('0c0c0c0c-0000-0000-0000-000000000063', (select id from public.levels where code = 'A1'), 'ZC locked',  63, 'free',    true);
+insert into public.modules (id, level_id, slug, title, position, access_tier, is_published) values
+  ('0c0c0c0c-0000-0000-0000-000000000061', (select id from public.levels where code = 'A1'), 'zc-m61', 'ZC free',    61, 'free',    true),
+  ('0c0c0c0c-0000-0000-0000-000000000062', (select id from public.levels where code = 'A1'), 'zc-m62', 'ZC premium', 62, 'premium', true),
+  ('0c0c0c0c-0000-0000-0000-000000000063', (select id from public.levels where code = 'A1'), 'zc-m63', 'ZC locked',  63, 'free',    true);
 select public.zc_mk_lesson('0c0c0c0c-0000-0000-0000-000000000061', 'zcL1', 1);
 select public.zc_mk_lesson('0c0c0c0c-0000-0000-0000-000000000062', 'zcP1', 1);
 select public.zc_mk_lesson('0c0c0c0c-0000-0000-0000-000000000063', 'zcX1', 1);
