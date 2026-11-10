@@ -53,6 +53,11 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f tests/30_content_delivery_test.sql | tee test-output-30.txt
           grep -q "TESTES ENTREGA DE CONTEUDO PASSARAM" test-output-30.txt
 
+      - name: Run account deletion tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/40_account_deletion_test.sql | tee test-output-40.txt
+          grep -q "TESTES EXCLUSAO DE CONTA PASSARAM" test-output-40.txt
+
       - name: Run profile avatar tests
         run: |
           psql -v ON_ERROR_STOP=1 -f tests/50_profile_avatar_test.sql | tee test-output-50.txt
