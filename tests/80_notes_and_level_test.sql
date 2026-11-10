@@ -459,7 +459,37 @@ select public.zn_expect_error(
 alter table public.user_notes enable trigger user_notes_trim_body;
 set role authenticated;
 select public.zn_as('8f8f8f8f-5555-5555-5555-555555555555');
+-- update so de lesson_section_id: body fica intacto (o trigger roda, mas nao muda nada)
+insert into public.user_notes (id, user_id, lesson_id, body)
+values ('91000000-0000-0000-0000-000000000008', auth.uid(), '1e1e1e1e-0000-0000-0000-000000000001', 'corpo intacto');
+update public.user_notes set lesson_section_id = '5e5e5e5e-0000-0000-0000-000000000001'
+ where id = '91000000-0000-0000-0000-000000000008';
+select public.zn_assert(
+  (select body = 'corpo intacto' and lesson_section_id = '5e5e5e5e-0000-0000-0000-000000000001'
+     from public.user_notes where id = '91000000-0000-0000-0000-000000000008'),
+  'BODY: update so de lesson_section_id mantem o body e grava a secao');
+update public.user_notes set lesson_section_id = null where id = '91000000-0000-0000-0000-000000000008';
+select public.zn_assert(
+  (select body = 'corpo intacto' and lesson_section_id is null
+     from public.user_notes where id = '91000000-0000-0000-0000-000000000008'),
+  'BODY: update so de lesson_section_id para nulo mantem o body');
+delete from public.user_notes where id = '91000000-0000-0000-0000-000000000008';
 reset role;
+
+-- Modulo PUBLICADO Premium, NAO liberado, aluno sem plano: locked = true e titulo nulo
+-- (E nao tem user_module_progress do modulo 181 nem plano)
+insert into public.user_notes (id, user_id, lesson_id, lesson_section_id, body, updated_at)
+values ('90000000-0000-0000-0000-0000000000e1', '8e8e8e8e-6666-6666-6666-666666666666',
+        '1e1e1e1e-0000-0000-0000-000000000002', '5e5e5e5e-0000-0000-0000-000000000003', 'E aula premium', now());
+set role authenticated;
+select public.zn_as('8e8e8e8e-6666-6666-6666-666666666666');
+select public.zn_assert(
+  (select i ->> 'target_title' is null and i ->> 'section_title' is null
+          and (i ->> 'locked')::boolean and i ->> 'access_tier' = 'premium' and i ->> 'body' = 'E aula premium'
+     from (select public.zn_it('90000000-0000-0000-0000-0000000000e1') i) x),
+  'PREMIUM NAO LIBERADO SEM PLANO: locked=true, titulo e secao nulos, access_tier premium');
+reset role;
+delete from public.user_notes where id = '90000000-0000-0000-0000-0000000000e1';
 
 -- ---------------------------------------------------------------------
 -- select_starting_level idempotente (aluno D, autoavaliacao A2)

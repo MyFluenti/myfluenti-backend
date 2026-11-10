@@ -21,7 +21,7 @@
 -- Unicode, como nbsp, nao entram). A constraint confere o texto aparado: 1 a 2000
 -- caracteres (espacos e quebras de linha do meio contam). Texto com milhoes de
 -- espacos nas pontas e aparado, nunca gravado inteiro. Conta caracteres, nao bytes.
--- Nenhuma linha existente viola (conferido no Supabase local, 0 notas; ainda nao ha
+-- Nenhuma linha existente viola (conferido no Supabase local: 2 notas, ambas compativeis; ainda nao ha
 -- ambientes remotos). Se algum ambiente tiver nota violando, a migration falha sem
 -- alterar nada: nenhum dado e apagado ou truncado automaticamente.
 -- ---------------------------------------------------------------------
@@ -34,6 +34,7 @@ end $$;
 
 create trigger user_notes_trim_body before insert or update on public.user_notes
   for each row execute function private.trim_note_body();
+revoke all on function private.trim_note_body() from public, anon, authenticated;
 
 alter table public.user_notes
   add constraint user_notes_body_length
