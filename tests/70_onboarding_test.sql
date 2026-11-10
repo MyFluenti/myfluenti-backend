@@ -40,7 +40,8 @@ create function public.zo_as(p_user uuid) returns void language sql as $$
 $$;
 
 -- ---------------------------------------------------------------------
--- Setup (postgres): um modulo publicado em A1, C2 sem modulo publicado, 2 alunos
+-- Setup (postgres): modulos publicados em A1 (zo-m70) e A2 (zo-m71), C2 sem modulo publicado,
+-- 2 alunos (A com autoavaliacao A2, para a troca real A1 -> A2)
 -- ---------------------------------------------------------------------
 insert into auth.users (id, email) values
   ('7a7a7a7a-1111-1111-1111-111111111111', 'zo-a@teste'),

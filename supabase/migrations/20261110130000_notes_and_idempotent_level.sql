@@ -2,40 +2,60 @@
 -- MyFluenti - Migration 011: notas (lista com titulo, limite do corpo) e
 -- select_starting_level idempotente.
 --
--- 1. user_notes_body_length: char_length(btrim(body, E' \t\r\n')) entre 1 e 2000
---    (INTERPRETACAO do pedido "2000 caracteres, constraint com trim"; confirmar).
---    O trim cobre espaco, tab, CR e LF; espacos Unicode (ex. nbsp) nao entram.
+-- 1. Limite do corpo da nota: trigger apara o body e a constraint
+--    user_notes_body_length mede o texto JA aparado (1..2000 caracteres).
+--    (INTERPRETACAO do pedido "2000 caracteres, constraint com trim"; confirmada pelo
+--    Gabriel na revisao: o valor medido e o valor gravado.)
 -- 2. public.get_my_notes: RPC de leitura das notas do aluno com o titulo do alvo.
 --    Necessaria porque o titulo da aula vive em lesson_versions (versionado, RLS
 --    por modulo/plano) e um select com relacao nao devolve a "versao atual".
--- 3. select_starting_level: se o nivel ativo ja e p_level_id, nao encerra nem
---    grava nova linha em user_level_history (o app repete a chamada quando perde
---    a resposta). Assinatura, retorno, erros e grants iguais.
+-- 3. select_starting_level: idempotente e serializada por aluno.
+--
+-- Esta migration foi revisada ANTES do merge (so existia no Supabase local), com
+-- autorizacao explicita do Gabriel. Depois do merge volta a ser imutavel.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
 -- 1. Limite do corpo da nota
--- Nenhuma linha existente viola (conferido no Supabase local; ainda nao ha
--- ambientes remotos). Se algum ambiente tiver nota violando, esta migration falha
--- sem alterar nada: nenhum dado e apagado ou truncado automaticamente.
+-- O trigger BEFORE INSERT/UPDATE apara espaco, tab, CR e LF das pontas (espacos
+-- Unicode, como nbsp, nao entram). A constraint confere o texto aparado: 1 a 2000
+-- caracteres (espacos e quebras de linha do meio contam). Texto com milhoes de
+-- espacos nas pontas e aparado, nunca gravado inteiro. Conta caracteres, nao bytes.
+-- Nenhuma linha existente viola (conferido no Supabase local, 0 notas; ainda nao ha
+-- ambientes remotos). Se algum ambiente tiver nota violando, a migration falha sem
+-- alterar nada: nenhum dado e apagado ou truncado automaticamente.
 -- ---------------------------------------------------------------------
+create or replace function private.trim_note_body() returns trigger
+language plpgsql set search_path = '' as $$
+begin
+  new.body := btrim(new.body, E' \t\r\n');
+  return new;
+end $$;
+
+create trigger user_notes_trim_body before insert or update on public.user_notes
+  for each row execute function private.trim_note_body();
+
 alter table public.user_notes
   add constraint user_notes_body_length
-  check (char_length(btrim(body, E' \t\r\n')) between 1 and 2000);
+  check (char_length(body) between 1 and 2000
+         and body = btrim(body, E' \t\r\n'));
 
 -- ---------------------------------------------------------------------
 -- 2. get_my_notes
--- Titulo do alvo (target_title):
---   aula     -> titulo da versao publicada mais recente, se o modulo esta publicado e o
---               plano permite; senao null.
---   topico   -> title, se publicado e permitido pelo plano; senao null.
---   palavra  -> lemma, se publicada e permitida pelo plano; senao null.
--- section_title: titulo da secao ancorada (versao da secao publicada e aula legivel);
--- null quando nao ha secao, a secao nao tem titulo ou o conteudo nao pode ser lido.
--- locked = true quando o alvo e Premium e o aluno esta sem plano. Alvo nao publicado:
--- target_title null e locked false. O corpo da nota e do proprio aluno e sempre volta.
--- Nao usa user_module_progress: a nota ja existe; publicacao e plano bastam para nao
--- vazar titulo. Paginacao igual a get_my_favorites (limit 1..50, offset 0..100000).
+-- Titulo do alvo (target_title) e da secao (section_title), ou null quando o aluno
+-- nao poderia ler o conteudo:
+--   aula     -> versao publicada mais recente, SE private.can_read_lesson_version(versao)
+--               (a mesma regra de get_module_lessons e get_lesson_content: versao
+--               publicada, modulo liberado em user_module_progress e plano que permite).
+--   topico   -> title, se publicado e (free ou plano Premium).
+--   palavra  -> lemma, idem.
+-- A nota continua listada; so o titulo some. O body e do proprio aluno e sempre volta.
+-- locked = true somente para conteudo PUBLICADO e Premium sem plano.
+-- Rascunho (nao publicado): locked false, target_title null e access_tier null (nao
+-- revela o tier do rascunho). Modulo ainda nao liberado: locked false, titulo null,
+-- access_tier do modulo publicado.
+-- Paginacao igual a get_my_favorites (limit 1..50, offset 0..100000). Empate de
+-- updated_at desempata por id.
 -- ---------------------------------------------------------------------
 create or replace function public.get_my_notes(p_limit int default 20, p_offset int default 0)
 returns jsonb
@@ -64,64 +84,68 @@ begin
   ),
   resolved as (
     select p.*,
-           lm.access_tier as lesson_tier, lm.is_published as lesson_pub,
-           gt.access_tier as topic_tier,  gt.is_published as topic_pub,
-           vo.access_tier as vocab_tier,  vo.is_published as vocab_pub
+           lm.access_tier as lesson_tier,
+           (lm.is_published and cv.id is not null) as lesson_pub,
+           cv.id as lesson_version_id, cv.title as lesson_title,
+           gt.access_tier as topic_tier, coalesce(gt.is_published, false) as topic_pub, gt.title as topic_title,
+           vo.access_tier as vocab_tier, coalesce(vo.is_published, false) as vocab_pub, vo.lemma as vocab_lemma
       from page p
       left join public.lessons l on l.id = p.lesson_id
       left join public.modules lm on lm.id = l.module_id
+      left join lateral (
+        select lv.id, lv.title from public.lesson_versions lv
+         where lv.lesson_id = p.lesson_id and lv.is_published
+         order by lv.version_number desc limit 1) cv on true
       left join public.grammar_topics gt on gt.id = p.grammar_topic_id
       left join public.vocabulary vo on vo.id = p.vocabulary_id
   ),
   shaped as (
     select r.*,
-           coalesce((case r.target_type
-                       when 'lesson' then r.lesson_tier
-                       when 'grammar_topic' then r.topic_tier
-                       else r.vocab_tier end) = 'premium' and not v_prem, false) as is_locked,
-           coalesce(case r.target_type
-                      when 'lesson' then r.lesson_pub
-                      when 'grammar_topic' then r.topic_pub
-                      else r.vocab_pub end, false) as is_pub
+           coalesce(case r.target_type when 'lesson' then r.lesson_pub
+                                       when 'grammar_topic' then r.topic_pub
+                                       else r.vocab_pub end, false) as is_pub,
+           case r.target_type when 'lesson' then r.lesson_tier
+                              when 'grammar_topic' then r.topic_tier
+                              else r.vocab_tier end as tier
       from resolved r
+  ),
+  titled as (
+    select s.*,
+           (s.is_pub and s.tier = 'premium' and not v_prem) as is_locked,
+           case s.target_type
+             when 'lesson' then s.lesson_version_id is not null
+                                and private.can_read_lesson_version(s.lesson_version_id)
+             else s.is_pub and (s.tier = 'free' or v_prem) end as title_ok
+      from shaped s
   )
   select (select count(*) from notes)::integer,
          coalesce((select jsonb_agg(jsonb_build_object(
-                     'id', s.id,
-                     'target_type', s.target_type,
-                     'lesson_id', s.lesson_id,
-                     'grammar_topic_id', s.grammar_topic_id,
-                     'vocabulary_id', s.vocabulary_id,
-                     'lesson_section_id', s.lesson_section_id,
+                     'id', t.id,
+                     'target_type', t.target_type,
+                     'lesson_id', t.lesson_id,
+                     'grammar_topic_id', t.grammar_topic_id,
+                     'vocabulary_id', t.vocabulary_id,
+                     'lesson_section_id', t.lesson_section_id,
                      'target_title',
-                       case when s.is_locked or not s.is_pub then null
-                       else case s.target_type
-                         when 'lesson' then
-                           (select lv.title from public.lesson_versions lv
-                             where lv.lesson_id = s.lesson_id and lv.is_published
-                             order by lv.version_number desc limit 1)
-                         when 'grammar_topic' then
-                           (select g.title from public.grammar_topics g where g.id = s.grammar_topic_id)
-                         else
-                           (select v.lemma from public.vocabulary v where v.id = s.vocabulary_id)
-                       end end,
-                     'section_title',
-                       case when s.target_type = 'lesson' and s.lesson_section_id is not null
-                                 and not s.is_locked and s.is_pub then
-                         (select ls.title from public.lesson_sections ls
-                            join public.lesson_versions lv on lv.id = ls.lesson_version_id
-                           where ls.id = s.lesson_section_id and lv.is_published)
+                       case when t.title_ok then
+                         case t.target_type when 'lesson' then t.lesson_title
+                                            when 'grammar_topic' then t.topic_title
+                                            else t.vocab_lemma end
                        end,
-                     'access_tier',
-                       case s.target_type when 'lesson' then s.lesson_tier
-                                          when 'grammar_topic' then s.topic_tier
-                                          else s.vocab_tier end,
-                     'locked', s.is_locked,
-                     'body', s.body,
-                     'created_at', s.created_at,
-                     'updated_at', s.updated_at)
-                   order by s.rn)
-                   from shaped s), '[]'::jsonb)
+                     'section_title',
+                       case when t.title_ok and t.target_type = 'lesson'
+                                 and t.lesson_section_id is not null then
+                         (select ls.title from public.lesson_sections ls
+                           where ls.id = t.lesson_section_id
+                             and private.can_read_lesson_version(ls.lesson_version_id))
+                       end,
+                     'access_tier', case when t.is_pub then t.tier end,
+                     'locked', coalesce(t.is_locked, false),
+                     'body', t.body,
+                     'created_at', t.created_at,
+                     'updated_at', t.updated_at)
+                   order by t.rn)
+                   from titled t), '[]'::jsonb)
     into v_total, v_items;
 
   return jsonb_build_object(
@@ -133,10 +157,19 @@ revoke all on function public.get_my_notes(int, int) from public, anon;
 grant execute on function public.get_my_notes(int, int) to authenticated;
 
 -- ---------------------------------------------------------------------
--- 3. select_starting_level idempotente
--- Copia da 010; muda so: v_active_level e o desvio que pula encerrar/inserir historico
--- quando o nivel ativo ja e p_level_id. Validacoes, update de profiles e unlock_module
--- continuam sempre executando.
+-- 3. select_starting_level idempotente e serializada por aluno
+-- Copia da 010; muda:
+--   (a) trava a linha do perfil do aluno no inicio (for update): duas chamadas
+--       simultaneas (toque duplo) sao serializadas; a segunda ve o historico ja
+--       gravado pela primeira e nao faz nada (antes: 23505 em
+--       user_level_history_one_active);
+--   (b) se o nivel ativo ja e p_level_id, nao encerra nem grava historico;
+--   (c) nesse caso, se vier p_placement_attempt_id explicito e a linha ativa ainda nao
+--       tem vinculo com teste, grava SO o placement_attempt_id nela (source e datas
+--       ficam como estavam: a linha continua dizendo como o nivel foi escolhido da
+--       primeira vez). Se a linha ja tem vinculo, o primeiro vinculo e mantido.
+-- Validacoes, update de profiles (coalesce de onboarding_completed_at) e
+-- unlock_module continuam sempre executando. Assinatura, retorno e grants iguais.
 -- ---------------------------------------------------------------------
 create or replace function public.select_starting_level(
   p_level_id uuid, p_placement_attempt_id uuid default null)
@@ -145,8 +178,12 @@ language plpgsql security definer set search_path = '' as $$
 declare
   v_uid uuid := private.require_user();
   v_attempt uuid; v_ref uuid; v_ref_pos smallint; v_sel_pos smallint;
-  v_has_active boolean; v_active_level uuid; v_source text; v_first uuid;
+  v_has_active boolean; v_active_level uuid; v_active_id uuid; v_active_attempt uuid;
+  v_source text; v_first uuid;
 begin
+  -- serializa chamadas do mesmo aluno (a linha de perfil existe desde o cadastro)
+  perform 1 from public.profiles p where p.id = v_uid for update;
+
   select l.position into v_sel_pos from public.levels l where l.id = p_level_id;
   if not found then
     raise exception 'Nivel inexistente' using errcode = 'P0002';
@@ -183,12 +220,20 @@ begin
     raise exception 'Nivel ainda sem modulos publicados' using errcode = 'P0002';
   end if;
 
-  select h.level_id into v_active_level from public.user_level_history h
+  select h.id, h.level_id, h.placement_attempt_id
+    into v_active_id, v_active_level, v_active_attempt
+    from public.user_level_history h
    where h.user_id = v_uid and h.ended_at is null;
   v_has_active := found;
 
-  -- Idempotencia: o nivel ativo ja e o escolhido -> nao toca no historico.
-  if v_active_level is distinct from p_level_id then
+  if v_has_active and v_active_level = p_level_id then
+    -- Idempotencia: o nivel ativo ja e o escolhido -> nao encerra nem cria linha.
+    -- So registra o vinculo com o teste, se veio um e a linha ainda nao tem.
+    if p_placement_attempt_id is not null and v_active_attempt is null then
+      update public.user_level_history set placement_attempt_id = p_placement_attempt_id
+       where id = v_active_id;
+    end if;
+  else
     v_source := case
       when v_has_active then 'manual_change'
       when v_attempt is null then 'self_assessment'
