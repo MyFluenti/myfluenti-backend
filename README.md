@@ -11,6 +11,7 @@ Implementa o Dicionário de Dados v1.0 com as decisões da revisão técnica (ve
 | `supabase/migrations/20261103000003_functions.sql` | Regras de negócio no backend (RPCs `security definer`) |
 | `supabase/migrations/20261104232828_library_review_profile.sql` | Biblioteca, favoritos, notas por seção, sessões de revisão (RPCs v2) e perfil. Endurece `record_review_result` (v1) |
 | `supabase/migrations/20261110100000_content_reference_data.sql` | 009: `normalize_text` trata apóstrofo, aspas, acento agudo, crase e prime tipográficos e remove reticências (e renormaliza `accepted_answers` via `private.renormalize_accepted_answers()`), `modules.slug`, níveis A1 a C2 como dado de referência e `lesson_versions.content_hash` (sha256, oculto do app por SELECT por coluna), para o importador de conteúdo. Nenhuma RPC muda de contrato |
+| `supabase/migrations/20261110120000_onboarding_completed_with_level.sql` | 010: `select_starting_level` grava `profiles.onboarding_completed_at` (se nulo) na mesma transação em que define o nível. Assinatura, retorno, erros e grants iguais |
 
 Aplicar com `supabase db push` (ou copiar para `supabase/migrations/` do projeto). Cada migration deve rodar uma única vez, nesta sequência (não são re-executáveis).
 
@@ -62,6 +63,8 @@ Os scripts rodam `docker exec -i supabase_db_myfluenti-backend psql ... < supaba
 
 `tests/60_content_reference_test.sql` cobre a migration 009: antes e depois do apóstrofo curvo (`We’re`), ponta a ponta pela aula e pela revisão, `private.renormalize_accepted_answers()` sobre dados antigos simulados (colisão, versão publicada, aviso de `word_order`), os 6 níveis, `modules.slug`, `lesson_versions.content_hash` (imutabilidade da versão publicada e SELECT por coluna: o aluno recebe 42501 ao ler o hash) e permissões do aluno. Roda depois do 50, no mesmo banco: 83 PASS (iguais no stub e no Supabase local). Termina com `===== TESTES REFERENCIA DE CONTEUDO PASSARAM =====`.
 
+`tests/70_onboarding_test.sql` cobre a migration 010: `select_starting_level` conclui o onboarding junto com o nível, preserva a data em uma troca posterior (`manual_change`) e não conclui nada quando falha (22023 e P0002). Confere também assinatura e permissão de execução. Roda depois do 60, no mesmo banco: 14 PASS (iguais no stub e no Supabase local). Termina com `===== TESTES ONBOARDING PASSARAM =====`.
+
 O teste roda **sem o stub** e sem alterações. O `auth.users` real aceita o insert só com `id` e `email`, porque as demais colunas do GoTrue são anuláveis. O `auth.uid()` real lê `request.jwt.claim.sub`, que é o claim que o teste define. O teste também passa como `postgres`, que no Supabase não é superusuário.
 
 ```powershell
@@ -73,6 +76,7 @@ Get-Content tests/30_content_delivery_test.sql -Raw | docker exec -i supabase_db
 Get-Content tests/40_account_deletion_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 Get-Content tests/50_profile_avatar_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 Get-Content tests/60_content_reference_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
+Get-Content tests/70_onboarding_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 npx -y supabase@2.121.0 db reset   # apaga os dados e as tabelas zz_* criadas pelo teste
 npx -y supabase@2.121.0 db advisors --local --type all
 ```
@@ -95,12 +99,14 @@ psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261109150000_account_dele
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110090000_profile_avatar.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110090100_drop_avatar_url.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110100000_content_reference_data.sql
+psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110120000_onboarding_completed_with_level.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/10_smoke_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/20_library_review_profile_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/30_content_delivery_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/40_account_deletion_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/50_profile_avatar_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/60_content_reference_test.sql
+psql -v ON_ERROR_STOP=1 -d mf -f tests/70_onboarding_test.sql
 ```
 
 ## Diferenças em relação ao Dicionário v1.0
