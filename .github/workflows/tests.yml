@@ -72,3 +72,8 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f tests/70_onboarding_test.sql | tee test-output-70.txt
           grep -q "TESTES ONBOARDING PASSARAM" test-output-70.txt
+
+      - name: Run notes and idempotent level tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/80_notes_and_level_test.sql | tee test-output-80.txt
+          grep -q "TESTES NOTAS E NIVEL PASSARAM" test-output-80.txt

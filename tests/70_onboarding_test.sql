@@ -40,7 +40,8 @@ create function public.zo_as(p_user uuid) returns void language sql as $$
 $$;
 
 -- ---------------------------------------------------------------------
--- Setup (postgres): um modulo publicado em A1, C2 sem modulo publicado, 2 alunos
+-- Setup (postgres): modulos publicados em A1 (zo-m70) e A2 (zo-m71), C2 sem modulo publicado,
+-- 2 alunos (A com autoavaliacao A2, para a troca real A1 -> A2)
 -- ---------------------------------------------------------------------
 insert into auth.users (id, email) values
   ('7a7a7a7a-1111-1111-1111-111111111111', 'zo-a@teste'),
@@ -56,6 +57,14 @@ select public.zo_assert(
   and (select onboarding_completed_at is null
      from public.profiles where id = '7b7b7b7b-2222-2222-2222-222222222222'),
   'SETUP: alunos novos comecam sem nivel e com onboarding em aberto');
+
+-- A2 publicado e autoavaliacao A2 do aluno A: a "troca de nivel" abaixo e uma troca real
+-- (desde a 011, repetir o nivel ativo e idempotente e nao grava historico).
+insert into public.modules (id, level_id, slug, title, position, access_tier, is_published)
+  values ('0e0e0e0e-0000-0000-0000-000000000071',
+          (select id from public.levels where code = 'A2'), 'zo-m71', 'ZO free A2', 71, 'free', true);
+update public.profiles set self_assessed_level_id = (select id from public.levels where code = 'A2')
+ where id = '7a7a7a7a-1111-1111-1111-111111111111';
 
 select public.zo_assert(
   private.first_published_module((select id from public.levels where code = 'C2')) is null,
@@ -94,7 +103,7 @@ update public.profiles set onboarding_completed_at = '2026-01-01T00:00:00Z'
 
 set role authenticated;
 select public.zo_as('7a7a7a7a-1111-1111-1111-111111111111');
-select public.select_starting_level((select id from public.levels where code = 'A1'));
+select public.select_starting_level((select id from public.levels where code = 'A2'));
 select public.zo_assert(
   (select onboarding_completed_at = '2026-01-01T00:00:00Z'::timestamptz
      from public.profiles where id = auth.uid()),
@@ -102,7 +111,7 @@ select public.zo_assert(
 select public.zo_assert(
   (select count(*) = 2 and count(*) filter (where source = 'manual_change') = 1
      from public.user_level_history where user_id = auth.uid()),
-  'HISTORICO: segunda escolha continua registrada como manual_change');
+  'HISTORICO: troca real de nivel (A1 para A2) e registrada como manual_change');
 reset role;
 
 -- ---------------------------------------------------------------------
