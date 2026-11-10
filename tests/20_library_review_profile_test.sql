@@ -690,7 +690,7 @@ begin
 
   -- perfil completo
   r := public.get_profile_summary('UTC');
-  perform public.zt_assert(r->>'display_name' = 'Aluno ZT' and r->>'email' = 'zt4@teste' and r->'avatar_url' = 'null'::jsonb
+  perform public.zt_assert(r->>'display_name' = 'Aluno ZT' and r->>'email' = 'zt4@teste' and not (r ? 'avatar_url')
     and r->'current_level'->>'code' = 'A1' and r->'current_level'->>'id' is not null and r->'current_level'->>'title' = 'Iniciante'
     and r->>'plan_tier' = 'free', 'PERFIL: nome, email, nivel em estudo e plano free');
   perform public.zt_assert((r->'placement'->>'completed')::boolean and r->'placement'->>'last_recommended_level_code' = 'A2'
