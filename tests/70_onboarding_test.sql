@@ -106,7 +106,7 @@ select public.zo_assert(
 reset role;
 
 -- ---------------------------------------------------------------------
--- B: falhas nao concluem o onboarding (tudo na mesma transacao)
+-- B: falhas de validacao nao concluem o onboarding (nivel e data ficam no mesmo UPDATE)
 -- ---------------------------------------------------------------------
 set role authenticated;
 select public.zo_as('7b7b7b7b-2222-2222-2222-222222222222');
@@ -116,7 +116,7 @@ select public.zo_expect_error(
 select public.zo_assert(
   (select onboarding_completed_at is null and current_level_id is null
      from public.profiles where id = auth.uid()),
-  'ATOMICO: erro 22023 nao conclui o onboarding nem define nivel');
+  'FALHA NAO CONCLUI: erro 22023 nao conclui o onboarding nem define nivel');
 
 -- autoavaliacao em C2 permite C2, mas C2 nao tem modulo publicado
 update public.profiles set self_assessed_level_id = (select id from public.levels where code = 'C2')
@@ -127,7 +127,7 @@ select public.zo_assert(
   (select onboarding_completed_at is null and current_level_id is null
      from public.profiles where id = auth.uid())
   and not exists (select 1 from public.user_level_history where user_id = auth.uid()),
-  'ATOMICO: erro P0002 nao conclui o onboarding nem grava historico');
+  'FALHA NAO CONCLUI: erro P0002 nao conclui o onboarding nem grava historico');
 
 -- A escolha valida conclui
 select public.select_starting_level((select id from public.levels where code = 'A1'));
