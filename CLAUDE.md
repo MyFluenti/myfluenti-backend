@@ -17,6 +17,7 @@ tests/
   30_content_delivery_test.sql  # entrega de conteúdo e cadastro (roda depois do 20)
   40_account_deletion_test.sql  # exclusão de conta, LGPD (roda depois do 30)
   50_profile_avatar_test.sql    # avatar montável e remoção de avatar_url (roda depois do 40)
+  60_content_reference_test.sql  # normalizacao de texto, niveis, modules.slug, content_hash (roda depois do 50)
 # Contrato das RPCs: myfluenti-docs/docs/dados/api.md
 .github/workflows/     # test, deploy-staging, deploy-prod (a criar)
 ```
@@ -45,14 +46,18 @@ psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261109121904_content_deli
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261109150000_account_deletion.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110090000_profile_avatar.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110090100_drop_avatar_url.sql
+psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110100000_content_reference_data.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/10_smoke_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/20_library_review_profile_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/30_content_delivery_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/40_account_deletion_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/50_profile_avatar_test.sql
+psql -v ON_ERROR_STOP=1 -d mf -f tests/60_content_reference_test.sql
 ```
 
-Esperado: 86 linhas `NOTICE:  PASS` no smoke (última linha `TODOS OS TESTES PASSARAM`) e 244 no tests/20 (última linha `TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM`) e 85 no tests/30 (última linha `TESTES ENTREGA DE CONTEUDO PASSARAM`) e 36 no tests/40 em PostgreSQL comum, 42 no Supabase local, onde também testa sessões, refresh tokens e o rastro em auth.audit_log_entries e auth.flow_state (última linha `TESTES EXCLUSAO DE CONTA PASSARAM`) e 116 no tests/50 (última linha `TESTES AVATAR PASSARAM`). O stub não deve ser aplicado no Supabase real.
+Esperado: 86 linhas `NOTICE:  PASS` no smoke (última linha `TODOS OS TESTES PASSARAM`) e 244 no tests/20 (última linha `TESTES BIBLIOTECA/REVISAO/PERFIL PASSARAM`) e 85 no tests/30 (última linha `TESTES ENTREGA DE CONTEUDO PASSARAM`) e 36 no tests/40 em PostgreSQL comum, 42 no Supabase local, onde também testa sessões, refresh tokens e o rastro em auth.audit_log_entries e auth.flow_state (última linha `TESTES EXCLUSAO DE CONTA PASSARAM`) e 116 no tests/50 (última linha `TESTES AVATAR PASSARAM`) e 83 no tests/60 (última linha `TESTES REFERENCIA DE CONTEUDO PASSARAM`). O stub não deve ser aplicado no Supabase real.
+
+Migration 009 (`20261110100000_content_reference_data.sql`): `normalize_text` trata apóstrofo, aspas, acento agudo, crase e prime tipográficos (e remove reticências; renormalização em `private.renormalize_accepted_answers()`, que avisa por `RAISE WARNING` se tokens de `word_order` passarem a igualar uma resposta aceita); `modules.slug` (NOT NULL, único, formato `^[a-z0-9]+(-[a-z0-9]+)*$`); níveis A1 a C2 inseridos como dado de referência (`on conflict do nothing`); `lesson_versions.content_hash` (sha256 hex, nulo permitido, gravado pelo importador em versão não publicada; o app NÃO lê a coluna: `lesson_versions` tem SELECT por coluna para `authenticated`, sem `content_hash`. Coluna nova em `lesson_versions` só chega ao app com grant explícito). Os testes não inserem mais níveis: usam os da migration.
 
 Dev seed: `supabase/dev-seed/dev_content.sql` é carregado por `scripts/load-dev-seed.ps1` (ou `.sh`). **Nunca** em staging ou produção. O `db reset` **não** o aplica.
 
@@ -62,4 +67,4 @@ No Supabase local, o mesmo teste roda sem stub e sem alterações (comandos no R
 
 Rodar em staging; levar o teste no Supabase local para o CI; decidir sobre o aviso `security_definer_view` em `placement_test_items` (intencional, ver PR de testes locais); troca de nível ao concluir um nível; regra de refazer aula após nova versão (`requires_relearning`, `needs_update`).
 
-Ordem dos testes, no mesmo banco e depois de `supabase db reset` (sem o dev-seed): `10_smoke_test.sql` (86 PASS), `20_library_review_profile_test.sql` (244 PASS), `30_content_delivery_test.sql` (85 PASS), `40_account_deletion_test.sql` (42 PASS no Supabase local, 36 no stub) e `50_profile_avatar_test.sql` (116 PASS).
+Ordem dos testes, no mesmo banco e depois de `supabase db reset` (sem o dev-seed): `10_smoke_test.sql` (86 PASS), `20_library_review_profile_test.sql` (244 PASS), `30_content_delivery_test.sql` (85 PASS), `40_account_deletion_test.sql` (42 PASS no Supabase local, 36 no stub) e `50_profile_avatar_test.sql` (116 PASS) e `60_content_reference_test.sql` (83 PASS).

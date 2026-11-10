@@ -115,10 +115,7 @@ insert into auth.users (id, email) values
   ('1d1d1d1d-1111-1111-1111-111111111111', 'zd-a@teste'),
   ('2d2d2d2d-2222-2222-2222-222222222222', 'zd-b@teste');
 
-insert into public.levels (code, title, position) values
-  ('A1', 'Iniciante', 1), ('A2', 'Basico', 2), ('B1', 'Intermediario', 3),
-  ('B2', 'Intermediario avancado', 4), ('C1', 'Avancado', 5), ('C2', 'Dominio', 6)
-on conflict (code) do nothing;
+-- Niveis A1..C2 vem da migration 009 (dado de referencia).
 
 do $$
 declare
@@ -128,8 +125,8 @@ declare
   t uuid; voc uuid; vex uuid; pt uuid; pq uuid;
 begin
   insert into public.zd_ids values ('lvl', lvl), ('module', m);
-  insert into public.modules (id, level_id, title, position, access_tier, is_published)
-    values (m, lvl, 'ZD free', 71, 'free', true);
+  insert into public.modules (id, level_id, slug, title, position, access_tier, is_published)
+    values (m, lvl, 'zd-m71', 'ZD free', 71, 'free', true);
 
   insert into public.grammar_topics (slug, title, category, level_id, is_published)
     values ('zd-topic', 'ZD topic', 'zd', lvl, true) returning id into t;

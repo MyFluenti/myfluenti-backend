@@ -119,7 +119,7 @@ begin
   -- Níveis
   insert into public.levels (code, title, position) values
     ('A1', 'Iniciante', 1), ('A2', 'Básico', 2), ('B1', 'Intermediário', 3),
-    ('B2', 'Intermediário avançado', 4), ('C1', 'Avançado', 5), ('C2', 'Domínio', 6)
+    ('B2', 'Pós-intermediário', 4), ('C1', 'Avançado', 5), ('C2', 'Proficiente', 6)
   on conflict (code) do nothing;
   select id into a1 from public.levels where code = 'A1';
   select id into b1 from public.levels where code = 'B1';
@@ -167,9 +167,9 @@ begin
     (pg_temp.dev_id('vex', 3, 2), pg_temp.dev_id('vocab', 3), 'She is happier now.', 'Ela está mais feliz agora.', 2);
 
   -- Módulos
-  insert into public.modules (id, level_id, title, description, position, access_tier, is_published) values
-    (m1, a1, 'Fundamentos (TESTE)', 'Módulo gratuito de teste.', 1, 'free', true),
-    (m2, a1, 'Cotidiano (TESTE)',   'Módulo Premium de teste.', 2, 'premium', true);
+  insert into public.modules (id, level_id, slug, title, description, position, access_tier, is_published) values
+    (m1, a1, 'dev-a1-fundamentos', 'Fundamentos (TESTE)', 'Módulo gratuito de teste.', 1, 'free', true),
+    (m2, a1, 'dev-a1-cotidiano', 'Cotidiano (TESTE)',   'Módulo Premium de teste.', 2, 'premium', true);
 
   -- Aula 1 (Free): verbo to be
   perform pg_temp.dev_lesson(m1, 1, 'dev-a1-m1-l1', t_free, $j$

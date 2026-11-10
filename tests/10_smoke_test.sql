@@ -92,22 +92,16 @@ insert into auth.users (id, email) values
   ('33333333-3333-3333-3333-333333333333', 'admin@teste');
 insert into public.user_roles (user_id, role) values ('33333333-3333-3333-3333-333333333333', 'content_admin');
 
-insert into public.levels (id, code, title, position) values
-  ('00000000-0000-0000-0000-0000000000a1', 'A1', 'Iniciante', 1),
-  ('00000000-0000-0000-0000-0000000000a2', 'A2', 'Basico', 2),
-  ('00000000-0000-0000-0000-0000000000b1', 'B1', 'Intermediario', 3),
-  ('00000000-0000-0000-0000-0000000000b2', 'B2', 'Intermediario avancado', 4),
-  ('00000000-0000-0000-0000-0000000000c1', 'C1', 'Avancado', 5),
-  ('00000000-0000-0000-0000-0000000000c2', 'C2', 'Dominio', 6);
+-- Os niveis A1..C2 vem da migration 009 (dado de referencia); os ids sao resolvidos por code.
 
 insert into public.grammar_topics (slug, title, category, is_published)
   values ('simple-present', 'Simple Present', 'tempos verbais', true);
 
-insert into public.modules (id, level_id, title, position, access_tier, is_published) values
-  ('aaaaaaaa-0000-0000-0000-000000000001', '00000000-0000-0000-0000-0000000000a1', 'M1 Fundamentos',  1, 'free',    true),
-  ('aaaaaaaa-0000-0000-0000-000000000002', '00000000-0000-0000-0000-0000000000a1', 'M2 Frases',       2, 'free',    true),
-  ('aaaaaaaa-0000-0000-0000-000000000003', '00000000-0000-0000-0000-0000000000a1', 'M3 Cotidiano',    3, 'premium', true),
-  ('aaaaaaaa-0000-0000-0000-000000000004', '00000000-0000-0000-0000-0000000000a2', 'M4 Basico',       1, 'free',    true);
+insert into public.modules (id, level_id, slug, title, position, access_tier, is_published) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', (select id from public.levels where code = 'A1'), 'zz-m1', 'M1 Fundamentos',  1, 'free',    true),
+  ('aaaaaaaa-0000-0000-0000-000000000002', (select id from public.levels where code = 'A1'), 'zz-m2', 'M2 Frases',       2, 'free',    true),
+  ('aaaaaaaa-0000-0000-0000-000000000003', (select id from public.levels where code = 'A1'), 'zz-m3', 'M3 Cotidiano',    3, 'premium', true),
+  ('aaaaaaaa-0000-0000-0000-000000000004', (select id from public.levels where code = 'A2'), 'zz-m4', 'M4 Basico',       1, 'free',    true);
 
 select public.zz_mk_lesson('aaaaaaaa-0000-0000-0000-000000000001', 'L1',  1, true,  5);
 select public.zz_mk_lesson('aaaaaaaa-0000-0000-0000-000000000001', 'L2',  2, true,  7);
@@ -196,11 +190,11 @@ end $$;
 
 -- NIV-03: nivel acima do recomendado e negado; nivel anterior permitido
 select public.zz_expect_error(
-  $q$select public.select_starting_level('00000000-0000-0000-0000-0000000000b2')$q$, '22023', 'superar');
-select public.select_starting_level('00000000-0000-0000-0000-0000000000a1');
+  $q$select public.select_starting_level((select id from public.levels where code = 'B2'))$q$, '22023', 'superar');
+select public.select_starting_level((select id from public.levels where code = 'A1'));
 do $$
 begin
-  perform public.zz_assert((select current_level_id = '00000000-0000-0000-0000-0000000000a1'
+  perform public.zz_assert((select current_level_id = (select id from public.levels where code = 'A1')
                               from public.profiles where id = auth.uid()), 'NIV-03: curso inicia no nivel escolhido (A1)');
   perform public.zz_assert((select source = 'placement_lower' and ended_at is null
                               from public.user_level_history where user_id = auth.uid()), 'NIV-03: historico registra origem');
@@ -212,7 +206,7 @@ end $$;
 
 -- SEC-01 / escrita direta negada
 select public.zz_expect_error(
-  $q$update public.profiles set current_level_id = '00000000-0000-0000-0000-0000000000c2'$q$, '42501');
+  $q$update public.profiles set current_level_id = (select id from public.levels where code = 'C2')$q$, '42501');
 select public.zz_expect_error(
   $q$insert into public.user_lesson_progress (user_id, lesson_id, status, completed_at, completed_version_id)
      select auth.uid(), lesson_id, 'completed', now(), version_id from public.zz_l where slug = 'L1'$q$, '42501');
@@ -398,8 +392,8 @@ begin
   perform public.zz_expect_error(format($q$select public.start_lesson_attempt(%L)$q$,
     (select lesson_id from public.zz_l where slug = 'L1')), '42501', 'module_locked');
   perform public.zz_expect_error(
-    $q$insert into public.modules (level_id, title, position) values ('00000000-0000-0000-0000-0000000000a1', 'hack', 99)$q$, '42501');
-  perform public.zz_expect_error($q$select public.select_starting_level('00000000-0000-0000-0000-0000000000a2')$q$, '22023', 'superar');
+    $q$insert into public.modules (level_id, slug, title, position) values ((select id from public.levels where code = 'A1'), 'zz-hack', 'hack', 99)$q$, '42501');
+  perform public.zz_expect_error($q$select public.select_starting_level((select id from public.levels where code = 'A2'))$q$, '22023', 'superar');
   perform public.start_placement_attempt();          -- aluno 2 inicia um nivelamento (usado no teste de exclusao)
 end $$;
 reset role;
@@ -408,7 +402,7 @@ set role authenticated;
 select public.zz_as('33333333-3333-3333-3333-333333333333');
 do $$
 begin
-  insert into public.modules (level_id, title, position) values ('00000000-0000-0000-0000-0000000000a2', 'M5 admin', 99);
+  insert into public.modules (level_id, slug, title, position) values ((select id from public.levels where code = 'A2'), 'zz-m5-admin', 'M5 admin', 99);
   perform public.zz_assert(true, 'admin (content_admin) consegue cadastrar conteudo');
 end $$;
 reset role;
