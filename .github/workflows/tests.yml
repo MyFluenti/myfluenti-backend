@@ -67,3 +67,8 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f tests/60_content_reference_test.sql | tee test-output-60.txt
           grep -q "TESTES REFERENCIA DE CONTEUDO PASSARAM" test-output-60.txt
+
+      - name: Run onboarding tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/70_onboarding_test.sql | tee test-output-70.txt
+          grep -q "TESTES ONBOARDING PASSARAM" test-output-70.txt
