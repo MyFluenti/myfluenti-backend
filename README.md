@@ -56,6 +56,8 @@ Os scripts rodam `docker exec -i supabase_db_myfluenti-backend psql ... < supaba
 
 `tests/30_content_delivery_test.sql` cobre `get_lesson_content`, `get_placement_items` e o nome no cadastro. Roda depois do 20, no mesmo banco, e termina com `===== TESTES ENTREGA DE CONTEUDO PASSARAM =====`.
 
+`tests/40_account_deletion_test.sql` cobre `delete_my_account` (exclusão de conta, LGPD): confirmação exata `EXCLUIR`, cascata varrida dinamicamente por toda FK para `auth.users`, isolamento entre alunos, contador anônimo `private.account_deletions` e, no Supabase local, sessões, refresh tokens e o rastro em `auth.audit_log_entries` e `auth.flow_state`. Roda depois do 30, no mesmo banco: 36 PASS em PostgreSQL comum (com stub) e 42 no Supabase local. Termina com `===== TESTES EXCLUSAO DE CONTA PASSARAM =====`.
+
 O teste roda **sem o stub** e sem alterações. O `auth.users` real aceita o insert só com `id` e `email`, porque as demais colunas do GoTrue são anuláveis. O `auth.uid()` real lê `request.jwt.claim.sub`, que é o claim que o teste define. O teste também passa como `postgres`, que no Supabase não é superusuário.
 
 ```powershell
@@ -63,6 +65,8 @@ npx -y supabase@2.121.0 start -x realtime,storage-api,imgproxy,mailpit,studio,ed
 npx -y supabase@2.121.0 db reset
 Get-Content tests/10_smoke_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 Get-Content tests/20_library_review_profile_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
+Get-Content tests/30_content_delivery_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
+Get-Content tests/40_account_deletion_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 npx -y supabase@2.121.0 db reset   # apaga os dados e as tabelas zz_* criadas pelo teste
 npx -y supabase@2.121.0 db advisors --local --type all
 ```
