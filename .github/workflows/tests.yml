@@ -77,3 +77,8 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f tests/80_notes_and_level_test.sql | tee test-output-80.txt
           grep -q "TESTES NOTAS E NIVEL PASSARAM" test-output-80.txt
+
+      - name: Run placement answer feedback tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/90_placement_feedback_test.sql | tee test-output-90.txt
+          grep -q "TESTES FEEDBACK NIVELAMENTO PASSARAM" test-output-90.txt
