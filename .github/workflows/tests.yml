@@ -82,3 +82,8 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f tests/90_placement_feedback_test.sql | tee test-output-90.txt
           grep -q "TESTES FEEDBACK NIVELAMENTO PASSARAM" test-output-90.txt
+
+      - name: Run placement retry cooldown tests
+        run: |
+          psql -v ON_ERROR_STOP=1 -f tests/95_placement_cooldown_test.sql | tee test-output-95.txt
+          grep -q "TESTES CARENCIA NIVELAMENTO PASSARAM" test-output-95.txt

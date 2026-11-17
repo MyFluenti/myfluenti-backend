@@ -4,7 +4,7 @@
 -- Autocontido (nao usa o dev-seed). Roda DEPOIS do 80, no mesmo banco:
 --   (1) Supabase local: db reset -> 10 -> ... -> 80 -> 90
 --   (2) PostgreSQL 16 puro: stub -> migrations -> 10 -> ... -> 80 -> 90
--- Helpers com prefixo zp_. Usuarios: 9a (A), 9b (B).
+-- Helpers com prefixo zp_. Usuarios: 9a (A), 9b (B), 9c (C, resposta escrita).
 -- =====================================================================
 \set ON_ERROR_STOP on
 \pset pager off
@@ -195,4 +195,71 @@ select public.zp_expect_error(
   '42501', 'permission denied');
 reset role;
 
+
+-- ---------------------------------------------------------------------
+-- Resposta escrita (translation e fill_blank): is_correct por texto, com normalizacao
+-- (maiusculas, apostrofo curvo, pontuacao e espacos). Usuario 9c, teste proprio.
+-- ---------------------------------------------------------------------
+insert into auth.users (id, email) values ('9c9c9c9c-3333-3333-3333-333333333333', 'zp-c@teste');
+insert into public.placement_tests (id, code, version_number, title, total_questions)
+  values ('bbbbbbbb-0000-0000-0000-0000000000fa', 'zpw', 1, 'ZP escrita', 4);
+
+do $$
+declare
+  lvl uuid := (select id from public.levels where code = 'A1');
+  i int; q uuid; t text; a text;
+begin
+  for i in 5..8 loop
+    q := ('a9000000-0000-0000-0000-00000000000' || i)::uuid;
+    t := case when i = 6 then 'fill_blank' else 'translation' end;
+    insert into public.questions (id, question_type, prompt) values (q, t, 'ZPW ' || i);
+    insert into private.question_answer_keys (question_id, explanation) values (q, 'ZP explicacao secreta ' || i);
+    foreach a in array case i when 5 then array['I''m fine', 'I am fine'] when 6 then array['was'] else array['Good morning'] end loop
+      insert into private.accepted_answers (question_id, answer_text, normalized_text, is_primary)
+        values (q, a, private.normalize_text(a), false);
+    end loop;
+    insert into public.placement_questions (placement_test_id, question_id, competency, difficulty_level_id, weight, position)
+      values ('bbbbbbbb-0000-0000-0000-0000000000fa', q, 'construction', lvl, 1, i - 4);
+  end loop;
+  update public.placement_tests set is_published = true where id = 'bbbbbbbb-0000-0000-0000-0000000000fa';
+end $$;
+
+set role authenticated;
+select public.zp_as('9c9c9c9c-3333-3333-3333-333333333333');
+insert into public.zp_ctx values ('attw', public.start_placement_attempt('bbbbbbbb-0000-0000-0000-0000000000fa'));
+-- translation, contracao com apostrofo curvo, maiusculas, pontuacao e espacos extras
+insert into public.zp_r select 'w_norm', public.submit_placement_answer(
+  (select v from public.zp_ctx where k = 'attw'), 'a9000000-0000-0000-0000-000000000005',
+  jsonb_build_object('text', E'  I’M   Fine!  '));
+-- fill_blank: certa
+insert into public.zp_r select 'w_fill_ok', public.submit_placement_answer(
+  (select v from public.zp_ctx where k = 'attw'), 'a9000000-0000-0000-0000-000000000006',
+  jsonb_build_object('text', 'WAS'));
+-- translation: errada
+insert into public.zp_r select 'w_bad', public.submit_placement_answer(
+  (select v from public.zp_ctx where k = 'attw'), 'a9000000-0000-0000-0000-000000000007',
+  jsonb_build_object('text', 'Good evening'));
+-- translation: texto ausente conta como erro, sem excecao
+insert into public.zp_r select 'w_empty', public.submit_placement_answer(
+  (select v from public.zp_ctx where k = 'attw'), 'a9000000-0000-0000-0000-000000000008',
+  '{}'::jsonb);
+reset role;
+
+select public.zp_assert((select r = '{"is_correct": true}'::jsonb from public.zp_r where k = 'w_norm'),
+  'ESCRITA: translation com apostrofo curvo, maiusculas, pontuacao e espacos normaliza e acerta');
+select public.zp_assert((select r = '{"is_correct": true}'::jsonb from public.zp_r where k = 'w_fill_ok'),
+  'ESCRITA: fill_blank certa (maiusculas) devolve true');
+select public.zp_assert((select r = '{"is_correct": false}'::jsonb from public.zp_r where k = 'w_bad'),
+  'ESCRITA: texto errado devolve false');
+select public.zp_assert((select r = '{"is_correct": false}'::jsonb from public.zp_r where k = 'w_empty'),
+  'ESCRITA: texto ausente devolve false');
+select public.zp_assert(
+  (select bool_and(jsonb_typeof(r) = 'object' and (select count(*) from jsonb_object_keys(r)) = 1 and r ? 'is_correct'
+                   and position('fine' in lower(r::text)) = 0 and position('ZP explicacao' in r::text) = 0)
+     from public.zp_r where k like 'w\_%'),
+  'ESCRITA: retorno so com is_correct, sem resposta aceita nem explicacao');
+select public.zp_assert(
+  (select count(*) = 4 and count(*) filter (where is_correct) = 2 and sum(awarded_points) = 2
+     from public.user_placement_answers where attempt_id = (select v from public.zp_ctx where k = 'attw')),
+  'ESCRITA: gravado igual ao devolvido (2 certas, 2 erradas, 2 pontos)');
 \echo ===== TESTES FEEDBACK NIVELAMENTO PASSARAM =====
