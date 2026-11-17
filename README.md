@@ -13,6 +13,8 @@ Implementa o Dicionário de Dados v1.0 com as decisões da revisão técnica (ve
 | `supabase/migrations/20261110100000_content_reference_data.sql` | 009: `normalize_text` trata apóstrofo, aspas, acento agudo, crase e prime tipográficos e remove reticências (e renormaliza `accepted_answers` via `private.renormalize_accepted_answers()`), `modules.slug`, níveis A1 a C2 como dado de referência e `lesson_versions.content_hash` (sha256, oculto do app por SELECT por coluna), para o importador de conteúdo. Nenhuma RPC muda de contrato |
 | `supabase/migrations/20261110120000_onboarding_completed_with_level.sql` | 010: `select_starting_level` grava `profiles.onboarding_completed_at` (se nulo) na mesma transação em que define o nível. Assinatura, retorno, erros e grants iguais |
 | `supabase/migrations/20261110130000_notes_and_idempotent_level.sql` | 011: RPC `get_my_notes` (lista de notas com título do alvo, nulo quando o aluno não poderia ler o conteúdo; paginada), trigger que apara o `body` da nota e constraint `user_notes_body_length` (1 a 2000 caracteres no texto aparado) e `select_starting_level` idempotente, serializada por aluno e que registra o vínculo com o teste de nivelamento. Assinaturas existentes iguais |
+| `supabase/migrations/20261111090000_placement_answer_feedback.sql` | 012: `submit_placement_answer` passa de `void` a `jsonb` e devolve `{"is_correct": boolean}` (decisão do Gabriel, 2026-11-10: feedback de acerto no nivelamento). Argumentos, erros e grants iguais; clientes antigos ignoram o retorno. Sem gabarito, explicação nem pontos |
+| `supabase/migrations/20261111100000_placement_retry_cooldown.sql` | 013: `start_placement_attempt` com carência provisória de 168 horas (7 dias): retoma sempre a `in_progress` (sem `p_test_id`, a mais recente em qualquer teste publicado, inclusive versão anterior); senão, tentativa do aluno nas últimas 168 horas gera `P0001 placement_retry_too_soon` com `hint` da liberação (ISO 8601 UTC). Serializada por aluno (`auth.users` key share, depois perfil). Assinatura e grants iguais |
 
 Aplicar com `supabase db push` (ou copiar para `supabase/migrations/` do projeto). Cada migration deve rodar uma única vez, nesta sequência (não são re-executáveis).
 
@@ -68,6 +70,10 @@ Os scripts rodam `docker exec -i supabase_db_myfluenti-backend psql ... < supaba
 
 `tests/80_notes_and_level_test.sql` cobre a migration 011: `get_my_notes` (um caso por tipo de alvo, título da versão mais recente, título nulo em Premium sem plano, rascunho (inclusive Premium, com `locked: false` e `access_tier` nulo) e módulo não liberado, ordem com empate de `updated_at`, paginação, isolamento, `anon` sem execute), o limite do corpo (trigger que apara, 2000 e 2001 caracteres, 5 milhões de espaços, multibyte, valor gravado conferido, constraint sozinha com o trigger desligado) e `select_starting_level` idempotente (chamada repetida sem linha nova, data do onboarding preservada, vínculo com o teste, troca real ainda grava `manual_change`). Roda depois do 70, no mesmo banco: 76 PASS (iguais no stub e no Supabase local). Termina com `===== TESTES NOTAS E NIVEL PASSARAM =====`.
 
+`tests/90_placement_feedback_test.sql` cobre a migration 012: assinatura e tipo de retorno (`jsonb`, sem sobrecarga), grants (`anon` e `public` sem execute), acerto e erro, objeto só com a chave `is_correct`, ausência de gabarito no retorno, consistência com o valor gravado, resposta escrita (translation e fill_blank, com normalização de apóstrofo, caixa e pontuação) e as regras antigas (outro aluno 42501, encerrada 55000, já respondida 23505, fora do teste 23503, sem sessão 28000). Roda depois do 80, no mesmo banco: 25 PASS (iguais no stub e no Supabase local). Termina com `===== TESTES FEEDBACK NIVELAMENTO PASSARAM =====`.
+
+`tests/95_placement_cooldown_test.sql` cobre a migration 013: assinatura e grants, retomar dentro da carência, `P0001 placement_retry_too_soon` com `hint` no formato exato, erro sem detalhe nem gabarito, carência por aluno, liberação após 7 dias (started_at recuado como postgres), tentativa `in_progress` de versão anterior (retomada sem `p_test_id`), `p_test_id` de teste não publicado (P0002) e a fronteira exata de 168 horas. Roda depois do 90: 26 PASS. Termina com `===== TESTES CARENCIA NIVELAMENTO PASSARAM =====`.
+
 O teste roda **sem o stub** e sem alterações. O `auth.users` real aceita o insert só com `id` e `email`, porque as demais colunas do GoTrue são anuláveis. O `auth.uid()` real lê `request.jwt.claim.sub`, que é o claim que o teste define. O teste também passa como `postgres`, que no Supabase não é superusuário.
 
 ```powershell
@@ -81,6 +87,8 @@ Get-Content tests/50_profile_avatar_test.sql -Raw | docker exec -i supabase_db_m
 Get-Content tests/60_content_reference_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 Get-Content tests/70_onboarding_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 Get-Content tests/80_notes_and_level_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
+Get-Content tests/90_placement_feedback_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
+Get-Content tests/95_placement_cooldown_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 npx -y supabase@2.121.0 db reset   # apaga os dados e as tabelas zz_* criadas pelo teste
 npx -y supabase@2.121.0 db advisors --local --type all
 ```
@@ -105,6 +113,8 @@ psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110090100_drop_avatar_
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110100000_content_reference_data.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110120000_onboarding_completed_with_level.sql
 psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261110130000_notes_and_idempotent_level.sql
+psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261111090000_placement_answer_feedback.sql
+psql -v ON_ERROR_STOP=1 -d mf -f supabase/migrations/20261111100000_placement_retry_cooldown.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/10_smoke_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/20_library_review_profile_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/30_content_delivery_test.sql
@@ -113,6 +123,8 @@ psql -v ON_ERROR_STOP=1 -d mf -f tests/50_profile_avatar_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/60_content_reference_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/70_onboarding_test.sql
 psql -v ON_ERROR_STOP=1 -d mf -f tests/80_notes_and_level_test.sql
+psql -v ON_ERROR_STOP=1 -d mf -f tests/90_placement_feedback_test.sql
+psql -v ON_ERROR_STOP=1 -d mf -f tests/95_placement_cooldown_test.sql
 ```
 
 ## Diferenças em relação ao Dicionário v1.0
