@@ -88,6 +88,7 @@ Get-Content tests/60_content_reference_test.sql -Raw | docker exec -i supabase_d
 Get-Content tests/70_onboarding_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 Get-Content tests/80_notes_and_level_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 Get-Content tests/90_placement_feedback_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
+Get-Content tests/95_placement_cooldown_test.sql -Raw | docker exec -i supabase_db_myfluenti-backend sh -c "psql -U postgres -d postgres -v ON_ERROR_STOP=1 -q 2>&1"
 npx -y supabase@2.121.0 db reset   # apaga os dados e as tabelas zz_* criadas pelo teste
 npx -y supabase@2.121.0 db advisors --local --type all
 ```
