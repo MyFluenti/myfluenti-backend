@@ -2,7 +2,7 @@
 -- MyFluenti - Testes da migration 013: carencia de 7 dias para nova tentativa do
 -- nivelamento (start_placement_attempt). PROVISORIO: o intervalo de 7 dias e fixo.
 -- Autocontido (nao usa o dev-seed). Roda DEPOIS do 90, no mesmo banco.
--- Helpers com prefixo zq_. Usuarios: 9d (D), 9e (E).
+-- Helpers com prefixo zq_. Usuarios: 9d (D), 9e (E), f1 (G), f2 (H).
 -- Para recuar started_at de tentativas (inclusive encerradas), o teste desliga o
 -- trigger de historico como postgres, so durante o update.
 -- =====================================================================
@@ -188,8 +188,12 @@ select public.zq_assert(
      from public.user_placement_attempts where user_id = '9d9d9d9d-1111-1111-1111-111111111111'),
   'COOLDOWN: historico preservado (antiga encerrada + nova em andamento)');
 
--- Tentativa in_progress de versao ANTERIOR: nao e retomada (so o teste atual), segue em
--- andamento; recente conta na carencia. Aluno E: tentativa em andamento no teste v1.
+-- ---------------------------------------------------------------------
+-- Tentativa in_progress de versao ANTERIOR (regra da 013 corrigida):
+--   p_test_id nulo  -> retoma a in_progress mais recente em qualquer teste publicado;
+--   p_test_id dado  -> so retoma a in_progress daquele teste; senao carencia.
+-- Aluno E: tentativa em andamento no teste v1, iniciada ha 8 dias.
+-- ---------------------------------------------------------------------
 select public.zq_backdate('9e9e9e9e-2222-2222-2222-222222222222', interval '8 days');
 update public.user_placement_attempts set placement_test_id = 'bbbbbbbb-0000-0000-0000-0000000000d1'
  where user_id = '9e9e9e9e-2222-2222-2222-222222222222';
@@ -198,15 +202,95 @@ select public.zq_as('9e9e9e9e-2222-2222-2222-222222222222');
 insert into public.zq_err select 'e_old', t.* from public.zq_try() t;
 reset role;
 select public.zq_assert(
-  (select state is null and id is not null
-          and id <> (select a.id from public.user_placement_attempts a
-                      where a.user_id = '9e9e9e9e-2222-2222-2222-222222222222'
-                        and a.placement_test_id = 'bbbbbbbb-0000-0000-0000-0000000000d1')
+  (select state is null
+          and id = (select a.id from public.user_placement_attempts a
+                     where a.user_id = '9e9e9e9e-2222-2222-2222-222222222222'
+                       and a.placement_test_id = 'bbbbbbbb-0000-0000-0000-0000000000d1')
      from public.zq_err where k = 'e_old'),
-  'VERSAO ANTIGA: in_progress do teste anterior nao e retomada; com mais de 7 dias abre nova no teste atual');
+  'VERSAO ANTIGA: sem p_test_id retoma a in_progress do teste anterior (mesmo com mais de 7 dias)');
 select public.zq_assert(
-  (select count(*) = 2 and count(*) filter (where status = 'in_progress') = 2
-     from public.user_placement_attempts where user_id = '9e9e9e9e-2222-2222-2222-222222222222'),
-  'VERSAO ANTIGA: a tentativa antiga continua em andamento, sem alteracao');
+  (select count(*) = 1 from public.user_placement_attempts where user_id = '9e9e9e9e-2222-2222-2222-222222222222'),
+  'VERSAO ANTIGA: nao criou outra tentativa');
+
+-- Aluno G: tentativa recente (menos de 7 dias) no teste v1; v2 e o mais recente.
+insert into auth.users (id, email) values ('f1f1f1f1-4444-4444-4444-444444444444', 'zq-g@teste');
+set role authenticated;
+select public.zq_as('f1f1f1f1-4444-4444-4444-444444444444');
+insert into public.zq_err select 'g_open_v1', t.* from public.zq_try('bbbbbbbb-0000-0000-0000-0000000000d1') t;
+insert into public.zq_err select 'g_null', t.* from public.zq_try() t;
+insert into public.zq_err select 'g_v2', t.* from public.zq_try('bbbbbbbb-0000-0000-0000-0000000000d2') t;
+reset role;
+select public.zq_assert(
+  (select n.state is null and n.id = o.id and o.id is not null
+     from public.zq_err n, public.zq_err o where n.k = 'g_null' and o.k = 'g_open_v1'),
+  'VERSAO ANTIGA: com menos de 7 dias, sem p_test_id devolve a mesma tentativa, sem erro');
+select public.zq_assert(
+  (select count(*) = 1 from public.user_placement_attempts where user_id = 'f1f1f1f1-4444-4444-4444-444444444444'),
+  'VERSAO ANTIGA: continua uma so tentativa');
+select public.zq_assert(
+  (select state = 'P0001' and msg = 'placement_retry_too_soon' from public.zq_err where k = 'g_v2'),
+  'P_TEST_ID: com p_test_id do teste atual (sem in_progress nele) vale a carencia');
+
+-- p_test_id de teste NAO publicado: P0002
+insert into public.placement_tests (id, code, version_number, title, total_questions)
+  values ('bbbbbbbb-0000-0000-0000-0000000000d3', 'zq', 3, 'ZQ v3 rascunho', 1);
+set role authenticated;
+select public.zq_as('9d9d9d9d-1111-1111-1111-111111111111');
+insert into public.zq_err select 'd_unpub', t.* from public.zq_try('bbbbbbbb-0000-0000-0000-0000000000d3') t;
+select public.zq_as('9e9e9e9e-2222-2222-2222-222222222222');
+insert into public.zq_err select 'e_unpub', t.* from public.zq_try('bbbbbbbb-0000-0000-0000-0000000000d3') t;
+reset role;
+select public.zq_assert(
+  (select state = 'P0002' and id is null from public.zq_err where k = 'd_unpub'),
+  'P_TEST_ID: teste nao publicado falha com P0002');
+select public.zq_assert(
+  (select state = 'P0002' and id is null from public.zq_err where k = 'e_unpub'),
+  'P_TEST_ID: teste nao publicado falha com P0002 mesmo com in_progress em outro teste');
+
+-- ---------------------------------------------------------------------
+-- Fronteira exata (mesma transacao, entao now() e o mesmo no setup e na chamada)
+-- Aluno H: uma tentativa; recuada para started_at = now() - 168 h (+ 1 s, ou exato).
+-- ---------------------------------------------------------------------
+create function public.zq_set_started(p_user uuid, p_ts timestamptz) returns void
+language plpgsql as $$
+begin
+  alter table public.user_placement_attempts disable trigger user_placement_attempts_guard;
+  update public.user_placement_attempts set started_at = p_ts where user_id = p_user;
+  alter table public.user_placement_attempts enable trigger user_placement_attempts_guard;
+end $$;
+
+insert into auth.users (id, email) values ('f2f2f2f2-5555-5555-5555-555555555555', 'zq-h@teste');
+set role authenticated;
+select public.zq_as('f2f2f2f2-5555-5555-5555-555555555555');
+insert into public.zq_ctx select 'h1', id::text from public.zq_try();
+reset role;
+-- encerra sem alterar o resto: fica abandonada (permitido pelo guard enquanto in_progress)
+update public.user_placement_attempts set status = 'abandoned' where user_id = 'f2f2f2f2-5555-5555-5555-555555555555';
+
+begin;
+select public.zq_set_started('f2f2f2f2-5555-5555-5555-555555555555', now() - interval '168 hours' + interval '1 second');
+set role authenticated;
+select public.zq_as('f2f2f2f2-5555-5555-5555-555555555555');
+insert into public.zq_err select 'h_before', t.* from public.zq_try() t;
+reset role;
+commit;
+select public.zq_assert((select state = 'P0001' and msg = 'placement_retry_too_soon' from public.zq_err where k = 'h_before'),
+  'FRONTEIRA: 1 segundo antes de completar 168 horas ainda barra');
+
+begin;
+select public.zq_set_started('f2f2f2f2-5555-5555-5555-555555555555', now() - interval '168 hours');
+set role authenticated;
+select public.zq_as('f2f2f2f2-5555-5555-5555-555555555555');
+insert into public.zq_err select 'h_at', t.* from public.zq_try() t;
+reset role;
+commit;
+select public.zq_assert((select state is null and id is not null from public.zq_err where k = 'h_at'),
+  'FRONTEIRA: no instante exato (started_at + 168 horas = agora) ja abre');
+
+-- 168 horas, nao '7 days': o fuso da sessao nao muda a carencia
+select public.zq_assert(
+  (select position('168 hours' in pg_get_functiondef('public.start_placement_attempt(uuid)'::regprocedure)) > 0
+      and position('7 days' in pg_get_functiondef('public.start_placement_attempt(uuid)'::regprocedure)) = 0),
+  'FUSO: a carencia usa 168 horas (sem interval de dias)');
 
 \echo ===== TESTES CARENCIA NIVELAMENTO PASSARAM =====
