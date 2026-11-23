@@ -381,7 +381,8 @@ declare pa uuid := 'bdbd0000-0000-0000-0000-000000000001'; c jsonb; it jsonb; to
 begin
   c := public.get_placement_items(pa);
   perform public.zc_assert(c->'attempt' = jsonb_build_object('id', pa, 'status', 'in_progress',
-      'placement_test_id', 'bcbc0000-0000-0000-0000-000000000001', 'total_questions', 30, 'answered_count', 0)
+      'placement_test_id', 'bcbc0000-0000-0000-0000-000000000001', 'total_questions', 30, 'answered_count', 0,
+      'level_code', null)   -- chave aditiva da 014 (nulo no teste geral)
     and jsonb_array_length(c->'items') = 3, 'PLACEMENT: caso feliz traz attempt e 3 itens');
   perform public.zc_assert((c->'items'->0->>'position')::int = 1 and (c->'items'->2->>'position')::int = 3
     and c->'items'->0->>'competency' = 'vocabulary' and c->'items'->2->>'competency' = 'construction'

@@ -289,8 +289,8 @@ select public.zq_assert((select state is null and id is not null from public.zq_
 
 -- 168 horas, nao '7 days': o fuso da sessao nao muda a carencia
 select public.zq_assert(
-  (select position('168 hours' in pg_get_functiondef('public.start_placement_attempt(uuid)'::regprocedure)) > 0
-      and position('7 days' in pg_get_functiondef('public.start_placement_attempt(uuid)'::regprocedure)) = 0),
+  (select position('168 hours' in pg_get_functiondef('private.start_placement_impl(text, uuid, uuid)'::regprocedure)) > 0
+      and position('7 days' in pg_get_functiondef('private.start_placement_impl(text, uuid, uuid)'::regprocedure)) = 0),
   'FUSO: a carencia usa 168 horas (sem interval de dias)');
 
 \echo ===== TESTES CARENCIA NIVELAMENTO PASSARAM =====
