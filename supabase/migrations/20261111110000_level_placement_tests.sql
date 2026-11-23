@@ -10,13 +10,15 @@
 --    continua. O numero de questoes e a distribuicao (8 questoes, 3-3-1-1) sao
 --    PROVISORIOS e ficam no validador do conteudo; o banco so mantem o check do 001.
 -- 2. Trigger placement_tests_level_guard (nao toca no guard do 001):
+--      - INSERT ja publicado (is_published ou published_at), de qualquer teste, e recusado
+--        (23514 placement_test_publish_on_insert_not_allowed): publica-se por update;
 --      - teste de nivel de A1 e recusado (23514 placement_level_test_a1_not_allowed);
 --      - ao publicar um teste de nivel, toda questao precisa ter difficulty_level_id
 --        igual ao level_id (23514 placement_level_test_difficulty_mismatch).
 -- 3. start_placement_attempt (v1): MESMA assinatura e grants (create or replace). Igual
 --    a 013 (retomada, carencia de 168 h, lock auth.users key share + perfil), mas so
 --    escolhe testes GERAIS. Com p_test_id que aponta para teste de nivel, recusa com
---    22023 placement_level_test_requires_v2 (app antigo nao abre teste de nivel). A
+--    22023 placement_level_test_requires_v2 (app antigo nao abre teste de nivel); rascunho ou id inexistente: P0002. A
 --    retomada de uma in_progress em andamento continua valendo para qualquer teste.
 -- 4. start_placement_attempt_v2(p_level_id uuid default null): nulo = teste geral (igual
 --    a v1 sem argumento); nivel informado = teste de nivel publicado mais recente.
@@ -47,6 +49,12 @@ alter table public.placement_tests
 create or replace function private.guard_placement_level_test() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
+  -- teste novo nasce como rascunho (qualquer teste, geral ou de nivel): publicar so por update,
+  -- depois de inserir as questoes. Sem isso, um teste publicado vazio ficaria sem como receber
+  -- questoes (o guard do 001 so valida a contagem no update).
+  if tg_op = 'INSERT' and (new.is_published or new.published_at is not null) then
+    raise exception 'placement_test_publish_on_insert_not_allowed' using errcode = '23514';
+  end if;
   if new.level_id is null then
     return new;
   end if;
@@ -82,7 +90,7 @@ begin
   -- validacao de argumentos (antes de qualquer lock ou retomada)
   if p_mode = 'v1' and p_test_id is not null
      and exists (select 1 from public.placement_tests pt
-                  where pt.id = p_test_id and pt.level_id is not null) then
+                  where pt.id = p_test_id and pt.is_published and pt.level_id is not null) then
     raise exception 'placement_level_test_requires_v2' using errcode = '22023';
   end if;
   if p_mode = 'v2' and p_level_id is not null then
@@ -132,7 +140,7 @@ begin
   else
     select pt.id into v_test from public.placement_tests pt
      where pt.is_published and pt.level_id is null
-     order by pt.published_at desc limit 1;
+     order by pt.published_at desc, pt.version_number desc limit 1;
   end if;
   if v_test is null then
     raise exception 'Nenhum teste de nivelamento publicado' using errcode = 'P0002';

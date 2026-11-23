@@ -422,4 +422,60 @@ select public.zl_expect_error(
   '22023', 'superar');
 reset role;
 
+
+-- ---------------------------------------------------------------------
+-- Revisao qa-security: insert ja publicado, fronteira fracionaria, v1 com p_test_id
+-- ---------------------------------------------------------------------
+select public.zl_expect_error(
+  $q$insert into public.placement_tests (code, version_number, title, total_questions, level_id, is_published, published_at)
+     values ('zl-ins-nivel', 1, 'ZL insert publicado', 1, public.zl_lvl('B1'), true, now())$q$,
+  '23514', 'placement_test_publish_on_insert_not_allowed');
+select public.zl_expect_error(
+  $q$insert into public.placement_tests (code, version_number, title, total_questions, is_published, published_at)
+     values ('zl-ins-geral', 1, 'ZL insert publicado geral', 1, true, now())$q$,
+  '23514', 'placement_test_publish_on_insert_not_allowed');
+select public.zl_expect_error(
+  $q$insert into public.placement_tests (code, version_number, title, total_questions, is_published)
+     values ('zl-ins-geral2', 1, 'ZL insert publicado geral sem data', 1, true)$q$,
+  '23514', 'placement_test_publish_on_insert_not_allowed');
+select public.zl_assert(
+  (select count(*) = 0 from public.placement_tests where code like 'zl-ins-%'),
+  'INSERT: teste inserido ja publicado (nivel ou geral) nao e gravado');
+insert into public.placement_tests (code, version_number, title, total_questions) values ('zl-ins-ok', 1, 'ZL rascunho', 1);
+select public.zl_assert(
+  (select not is_published and published_at is null from public.placement_tests where code = 'zl-ins-ok'),
+  'INSERT: rascunho continua permitido (publica-se por update)');
+
+-- fronteira fracionaria: pesos 7 e 3,0001 (total 10,0001); acertar so a de peso 7 = 69,9993% < 70%
+select public.zl_mk_test('zl-c1', 1, 'C1', array[7, 3.0001], null, true, now() + interval '2 hours');
+set role authenticated;
+insert into public.zl_res select 'c1_7', public.zl_run(public.zl_uid(27), 'zl-c1#1', 'C1', array[1]);
+insert into public.zl_res select 'c1_all', public.zl_run(public.zl_uid(28), 'zl-c1#1', 'C1', array[1,2]);
+reset role;
+select public.zl_assert(public.zl_rec('c1_7') = 'B2'
+    and (select (r ->> 'score_pct')::numeric < 70 and (r ->> 'score_pct')::numeric > 69.99 from public.zl_res where k = 'c1_7'),
+  'FAIXA FRACIONARIA: 69,9993% (peso 7 de 10,0001) fica abaixo de 70% e recomenda B2, sem arredondar para cima');
+select public.zl_assert(public.zl_rec('c1_all') = 'C1', 'FAIXA FRACIONARIA: 100% confirma C1');
+
+-- v1 com p_test_id: geral publicado funciona; nivel em rascunho e inexistente dao P0002
+insert into public.zl_res select 'draft_id', jsonb_build_object('id', public.zl_mk_test('zl-draft-b1', 1, 'B1', array[1,1], null, false));
+set role authenticated;
+select public.zl_as(public.zl_uid(29));
+insert into public.zl_res select 'v1_geral', jsonb_build_object('id',
+  public.start_placement_attempt((select id from public.placement_tests where code = 'zl-geral')));
+select public.zl_as(public.zl_uid(30));
+select public.zl_expect_error(
+  format($q$select public.start_placement_attempt(%L)$q$, (select r ->> 'id' from public.zl_res where k = 'draft_id')),
+  'P0002', 'Nenhum teste de nivelamento publicado');
+select public.zl_expect_error(
+  $q$select public.start_placement_attempt('c0c0c0c0-ffff-ffff-ffff-fffffffffff1')$q$,
+  'P0002', 'Nenhum teste de nivelamento publicado');
+reset role;
+select public.zl_assert(
+  (select pt.code = 'zl-geral' from public.user_placement_attempts a join public.placement_tests pt on pt.id = a.placement_test_id
+    where a.id = (select (r ->> 'id')::uuid from public.zl_res where k = 'v1_geral')),
+  'V1: p_test_id de teste geral publicado abre a tentativa');
+select public.zl_assert((select count(*) = 0 from public.user_placement_attempts where user_id = public.zl_uid(30)),
+  'V1: rascunho de nivel e id inexistente nao criam tentativa e dao o mesmo erro (nao revela o rascunho)');
+
 \echo ===== TESTES NIVELAMENTO POR NIVEL PASSARAM =====
